@@ -92,8 +92,8 @@ pub struct EstimateArgs {
     pub file_input: Option<String>,
 
     //DATABASE INPUT
-    #[clap(short='d', long="db", required = true, help_heading="DATABASE INPUT", help = "kore db (core.fasta from kore build)")]
-    pub db: String,
+    #[clap(short='c', long="core", required = true, help_heading="DATABASE INPUT", help = "kore db (core.fasta from kore build)")]
+    pub core: String,
 
     //OUTPUT
     #[clap(short='o', long="output", default_value = DEFAULT_OUT_FOLDER, help_heading="OUTPUT", help="Folder to output all resulting files")]
