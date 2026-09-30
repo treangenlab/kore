@@ -1,0 +1,269 @@
+use crate::consts::*;
+
+use log::*;
+
+use std::collections::HashMap;
+use std::fs;
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const LINE_WRAP: usize = 80;
+
+pub struct FastaRecord {
+    pub header: String, //full header line without '>'
+    pub seq: Vec<u8>,
+}
+
+impl FastaRecord {
+    pub fn id(&self) -> &str {
+        self.header.split_whitespace().next().unwrap()
+    }
+}
+
+pub fn read_fasta(path: &Path) -> Vec<FastaRecord> {
+    let file = File::open(path).unwrap_or_else(|e| {
+        error!("Unable to open {}: {}", path.display(), e);
+        std::process::exit(1);
+    });
+
+    let mut records: Vec<FastaRecord> = Vec::new();
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if let Some(header) = line.strip_prefix('>') {
+            records.push(FastaRecord { header: header.to_string(), seq: Vec::new() });
+        } else if let Some(record) = records.last_mut() {
+            record.seq.extend(line.trim_end().bytes());
+        }
+    }
+    records
+}
+
+pub fn write_fasta(records: &[&FastaRecord], path: &Path) {
+    let file = File::create(path).unwrap_or_else(|e| {
+        error!("Unable to create {}: {}", path.display(), e);
+        std::process::exit(1);
+    });
+    let mut writer = BufWriter::new(file);
+    for record in records {
+        writeln!(writer, ">{}", record.header).unwrap();
+        for chunk in record.seq.chunks(LINE_WRAP) {
+            writer.write_all(chunk).unwrap();
+            writer.write_all(b"\n").unwrap();
+        }
+    }
+    writer.flush().unwrap();
+}
+
+//"rep_0_lcb12" -> "rep_0"
+fn replicate_of(id: &str) -> &str {
+    id.rsplit_once("_lcb").map(|(rep, _)| rep).unwrap_or(id)
+}
+
+fn run_command(cmd: &mut Command, name: &str) {
+    let output = cmd.output().unwrap_or_else(|e| {
+        error!("Unable to run {}: {}", name, e);
+        std::process::exit(1);
+    });
+    if !output.status.success() {
+        error!("{} failed:\n{}", name, String::from_utf8_lossy(&output.stderr));
+        std::process::exit(1);
+    }
+}
+
+//all-vs-all megablast of every replicate's consensus LCBs
+fn run_blast(fastas: &[PathBuf], blast_dir: &Path, threads: usize) -> PathBuf {
+    fs::create_dir_all(blast_dir).unwrap_or_else(|e| {
+        error!("Unable to create directory {}: {}", blast_dir.display(), e);
+        std::process::exit(1);
+    });
+
+    let all_fasta = blast_dir.join("all_lcbs.fasta");
+    let records: Vec<FastaRecord> = fastas.iter().flat_map(|f| read_fasta(f)).collect();
+    write_fasta(&records.iter().collect::<Vec<_>>(), &all_fasta);
+
+    let db = blast_dir.join("all_lcbs");
+    run_command(
+        Command::new(MAKEBLASTDB_BIN)
+            .arg("-in").arg(&all_fasta)
+            .args(["-dbtype", "nucl"])
+            .arg("-out").arg(&db),
+        MAKEBLASTDB_BIN,
+    );
+
+    let hits = blast_dir.join("all_vs_all.tsv");
+    debug!("Running blastn all-vs-all on {} LCBs -> {}", records.len(), hits.display());
+    run_command(
+        Command::new(BLASTN_BIN)
+            .args(["-task", "megablast"])
+            .arg("-query").arg(&all_fasta)
+            .arg("-db").arg(&db)
+            .args(["-evalue", BLAST_EVALUE, "-max_target_seqs", BLAST_MAX_TARGETS])
+            .args(["-outfmt", "6 qseqid sseqid pident qstart qend"])
+            .arg("-num_threads").arg(threads.to_string())
+            .arg("-out").arg(&hits),
+        BLASTN_BIN,
+    );
+
+    hits
+}
+
+//for each (LCB, other replicate), the regions of the LCB hit at >= min_identity
+fn load_hit_intervals(hits: &Path, min_identity: f64) -> HashMap<(String, String), Vec<(usize, usize)>> {
+    let file = File::open(hits).unwrap_or_else(|e| {
+        error!("Unable to open {}: {}", hits.display(), e);
+        std::process::exit(1);
+    });
+
+    let mut intervals: HashMap<(String, String), Vec<(usize, usize)>> = HashMap::new();
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        let f: Vec<&str> = line.split('\t').collect();
+        let (query, subject) = (f[0], f[1]);
+        let (q_rep, s_rep) = (replicate_of(query), replicate_of(subject));
+        if q_rep == s_rep || f[2].parse::<f64>().unwrap() < min_identity {
+            continue;
+        }
+
+        let (start, end): (usize, usize) = (f[3].parse().unwrap(), f[4].parse().unwrap());
+        intervals.entry((query.to_string(), s_rep.to_string()))
+            .or_default()
+            .push((start.min(end), start.max(end)));
+    }
+    intervals
+}
+
+//sorted union of 1-based inclusive intervals
+fn merge_intervals(intervals: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut sorted = intervals.to_vec();
+    sorted.sort();
+
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in sorted {
+        match merged.last_mut() {
+            Some((_, e)) if start <= *e + 1 => *e = (*e).max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
+fn covered_bp(intervals: &[(usize, usize)]) -> usize {
+    merge_intervals(intervals).iter().map(|(s, e)| e - s + 1).sum()
+}
+
+//overlap of two sorted, merged interval lists
+fn intersect_intervals(a: &[(usize, usize)], b: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        let start = a[i].0.max(b[j].0);
+        let end = a[i].1.min(b[j].1);
+        if start <= end {
+            out.push((start, end));
+        }
+        if a[i].1 < b[j].1 { i += 1 } else { j += 1 }
+    }
+    out
+}
+
+//LCB is covered >= min_cov (%) in every other replicate
+fn in_all_replicates(
+    record: &FastaRecord,
+    replicates: &[String],
+    intervals: &HashMap<(String, String), Vec<(usize, usize)>>,
+    min_cov: f64,
+) -> bool {
+    let own = replicate_of(record.id());
+    replicates.iter().filter(|r| r.as_str() != own).all(|other| {
+        let hits = intervals.get(&(record.id().to_string(), other.clone()));
+        let covered = hits.map_or(0, |h| covered_bp(h));
+        100.0 * covered as f64 / record.seq.len() as f64 >= min_cov
+    })
+}
+
+//stretches of an LCB that are covered in every other replicate
+fn shared_segments(
+    record: &FastaRecord,
+    replicates: &[String],
+    intervals: &HashMap<(String, String), Vec<(usize, usize)>>,
+) -> Vec<(usize, usize)> {
+    let own = replicate_of(record.id());
+    replicates.iter().filter(|r| r.as_str() != own).fold(vec![(1, record.seq.len())], |shared, other| {
+        let hits = intervals.get(&(record.id().to_string(), other.clone())).map_or(vec![], |h| merge_intervals(h));
+        intersect_intervals(&shared, &hits)
+    })
+}
+
+fn segment_record(record: &FastaRecord, (start, end): (usize, usize)) -> FastaRecord {
+    let rest = record.header.split_once(' ').map_or("", |(_, r)| r);
+    FastaRecord {
+        header: format!("{}:{}-{} lcb_len={} {}", record.id(), start, end, record.seq.len(), rest),
+        seq: record.seq[start - 1..end].to_vec(),
+    }
+}
+
+//keeps LCBs of the first replicate that are present in all replicates, trimmed to the stretches
+//shared by all of them
+pub fn merge_replicates(
+    fastas: &[PathBuf],
+    blast_dir: &Path,
+    min_identity: f64,
+    min_cov: f64,
+    min_length: usize,
+    threads: usize,
+) -> Vec<FastaRecord> {
+    let per_rep: Vec<Vec<FastaRecord>> = fastas.iter().map(|f| read_fasta(f)).collect();
+
+    if fastas.len() == 1 {
+        per_rep[0].iter().map(|r| segment_record(r, (1, r.seq.len()))).collect()
+    } else {
+        let hits = run_blast(fastas, blast_dir, threads);
+        let intervals = load_hit_intervals(&hits, min_identity);
+        let replicates: Vec<String> = (0..fastas.len()).map(|i| format!("rep_{}", i)).collect();
+
+        for (rep, records) in replicates.iter().zip(&per_rep) {
+            let n_shared = records.iter().filter(|r| in_all_replicates(r, &replicates, &intervals, min_cov)).count();
+            info!("{}: {} of {} LCBs present in all replicates", rep, n_shared, records.len());
+        }
+
+        let shared: Vec<&FastaRecord> = per_rep[0].iter()
+            .filter(|r| in_all_replicates(r, &replicates, &intervals, min_cov))
+            .collect();
+
+        let segments: Vec<FastaRecord> = shared.iter()
+            .flat_map(|r| shared_segments(r, &replicates, &intervals).into_iter().map(move |seg| segment_record(r, seg)))
+            .filter(|r| r.seq.len() >= min_length)
+            .collect();
+        info!("Trimmed {} shared LCBs to {} segments present in all replicates", shared.len(), segments.len());
+        segments
+    }
+}
+
+//renames the final core records to lcb1, lcb2, ...
+pub fn rename_core(core: &mut [FastaRecord]) {
+    for (i, record) in core.iter_mut().enumerate() {
+        let rest = record.header.split_once(' ').map_or("", |(_, r)| r).to_string();
+        record.header = format!("lcb{} {}", i + 1, rest);
+    }
+}
+
+//"lcb1 ... n_genomes=25 diversity=0.0123" -> one csv row
+fn csv_row(record: &FastaRecord) -> String {
+    let field = |key: &str| record.header.split_whitespace()
+        .find_map(|f| f.strip_prefix(key))
+        .unwrap_or("");
+    [record.id(), &record.seq.len().to_string(), field("diversity="), field("n_genomes=")].join(",")
+}
+
+pub fn write_core_csv(core: &[FastaRecord], path: &Path) {
+    let file = File::create(path).unwrap_or_else(|e| {
+        error!("Unable to create {}: {}", path.display(), e);
+        std::process::exit(1);
+    });
+    let mut writer = BufWriter::new(file);
+    writeln!(writer, "id,length,diversity,n_genomes").unwrap();
+    for record in core {
+        writeln!(writer, "{}", csv_row(record)).unwrap();
+    }
+    writer.flush().unwrap();
+}
