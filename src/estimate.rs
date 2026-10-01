@@ -91,12 +91,27 @@ fn map_genome(genome: &str, core: &[FastaRecord], threads: usize) -> Vec<Vec<Hit
 }
 
 //percent of core bp covered by the hits
-fn completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
+fn nucleotide_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
     let core_bp: usize = core.iter().map(|lcb| lcb.seq.len()).sum();
     let covered: usize = hits.iter()
         .map(|h| covered_bp(&h.iter().map(|x| (x.lcb_start, x.lcb_end)).collect::<Vec<_>>()))
         .sum();
     100.0 * covered as f64 / core_bp as f64
+}
+
+//LCB is present if >= LCB_PRESENT_COV of it is covered by alignments >= LCB_PRESENT_IDENTITY
+fn lcb_present(lcb: &FastaRecord, hits: &[Hit]) -> bool {
+    let intervals: Vec<(usize, usize)> = hits.iter()
+        .filter(|h| h.identity >= LCB_PRESENT_IDENTITY)
+        .map(|h| (h.lcb_start, h.lcb_end))
+        .collect();
+    100.0 * covered_bp(&intervals) as f64 / lcb.seq.len() as f64 >= LCB_PRESENT_COV
+}
+
+//percent of core LCBs present
+fn lcb_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
+    let present = core.iter().zip(hits).filter(|(lcb, h)| lcb_present(lcb, h)).count();
+    100.0 * present as f64 / core.len() as f64
 }
 
 fn create_csv(path: &Path) -> BufWriter<File> {
@@ -109,9 +124,9 @@ fn create_csv(path: &Path) -> BufWriter<File> {
 
 fn write_completeness(genomes: &[String], core: &[FastaRecord], hits: &[Vec<Vec<Hit>>], path: &Path) {
     let mut writer = create_csv(path);
-    writeln!(writer, "genome,completeness").unwrap();
+    writeln!(writer, "genome,nucleotide_completeness,lcb_completeness").unwrap();
     for (genome, h) in genomes.iter().zip(hits) {
-        writeln!(writer, "{},{:.4}", genome_name(genome), completeness(core, h)).unwrap();
+        writeln!(writer, "{},{:.4},{:.4}", genome_name(genome), nucleotide_completeness(core, h), lcb_completeness(core, h)).unwrap();
     }
     writer.flush().unwrap();
 }
@@ -155,7 +170,8 @@ pub fn estimate(args: EstimateArgs) {
                     break;
                 }
                 let hits = map_genome(&genomes[i], &core, threads_per);
-                info!("{}: {:.2}% complete", genome_name(&genomes[i]), completeness(&core, &hits));
+                info!("{}: {:.2}% nucleotide completeness, {:.2}% LCB completeness",
+                    genome_name(&genomes[i]), nucleotide_completeness(&core, &hits), lcb_completeness(&core, &hits));
                 results.lock().unwrap()[i] = hits;
             });
         }
