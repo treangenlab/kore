@@ -119,6 +119,13 @@ fn decompress_genome(genome: &str, genome_dir: &Path) -> String {
 }
 
 //runs parsnp, killing it early if another replicate has failed
+fn absolute_path(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|e| {
+        error!("Unable to resolve path {}: {}", path.display(), e);
+        std::process::exit(1);
+    })
+}
+
 fn run_parsnp(genomes: &[String], out_dir: &Path, threads: usize, failed: &AtomicBool) -> bool {
     debug!("Running parsnp on {} genomes -> {}", genomes.len(), out_dir.display());
 
@@ -128,11 +135,20 @@ fn run_parsnp(genomes: &[String], out_dir: &Path, threads: usize, failed: &Atomi
         std::process::exit(1);
     });
 
+    //parsnp writes allmums.out etc to its cwd, so each run gets its own
+    let work_dir = out_dir.with_extension("work");
+    fs::create_dir_all(&work_dir).unwrap_or_else(|e| {
+        error!("Unable to create directory {}: {}", work_dir.display(), e);
+        std::process::exit(1);
+    });
+    let genomes: Vec<PathBuf> = genomes.iter().map(|g| absolute_path(Path::new(g))).collect();
+
     let mut child = Command::new(PARSNP_BIN)
-        .arg("-d").args(genomes)
+        .current_dir(&work_dir)
+        .arg("-d").args(&genomes)
         .args(["-r", "!", "-c", "--skip-phylogeny", "--force-overwrite"])
         .arg("-p").arg(threads.to_string())
-        .arg("-o").arg(out_dir)
+        .arg("-o").arg(absolute_path(out_dir))
         .stdout(log.try_clone().unwrap())
         .stderr(log)
         .spawn()
