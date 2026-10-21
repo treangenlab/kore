@@ -199,3 +199,14 @@ pub fn intersect_intervals(a: &[(usize, usize)], b: &[(usize, usize)]) -> Vec<(u
     }
     out
 }
+
+//p-th percentile (0-100) with linear interpolation between ranks, 0 if empty
+pub fn percentile(values: &mut [f64], p: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(|a, b| a.total_cmp(b));
+    let rank = p / 100.0 * (values.len() - 1) as f64;
+    let (lo, hi) = (rank.floor() as usize, rank.ceil() as usize);
+    values[lo] + (values[hi] - values[lo]) * (rank - lo as f64)
+}

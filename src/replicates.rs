@@ -3,7 +3,7 @@ use crate::util::*;
 
 use log::*;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -87,21 +87,6 @@ fn load_hit_intervals(hits: &Path, min_identity: f64) -> HashMap<(String, String
     intervals
 }
 
-//LCB is covered >= min_cov (%) in every other replicate
-fn in_all_replicates(
-    record: &FastaRecord,
-    replicates: &[String],
-    intervals: &HashMap<(String, String), Vec<(usize, usize)>>,
-    min_cov: f64,
-) -> bool {
-    let own = replicate_of(record.id());
-    replicates.iter().filter(|r| r.as_str() != own).all(|other| {
-        let hits = intervals.get(&(record.id().to_string(), other.clone()));
-        let covered = hits.map_or(0, |h| covered_bp(h));
-        100.0 * covered as f64 / record.seq.len() as f64 >= min_cov
-    })
-}
-
 //stretches of an LCB that are covered in every other replicate
 fn shared_segments(
     record: &FastaRecord,
@@ -123,13 +108,11 @@ fn segment_record(record: &FastaRecord, (start, end): (usize, usize)) -> FastaRe
     }
 }
 
-//keeps LCBs of the first replicate that are present in all replicates, trimmed to the stretches
-//shared by all of them
+//trims every LCB of the first replicate to the stretches present in all replicates
 pub fn merge_replicates(
     fastas: &[PathBuf],
     blast_dir: &Path,
     min_identity: f64,
-    min_cov: f64,
     min_length: usize,
     threads: usize,
 ) -> Vec<FastaRecord> {
@@ -142,20 +125,15 @@ pub fn merge_replicates(
         let intervals = load_hit_intervals(&hits, min_identity);
         let replicates: Vec<String> = (0..fastas.len()).map(|i| format!("rep_{}", i)).collect();
 
-        for (rep, records) in replicates.iter().zip(&per_rep) {
-            let n_shared = records.iter().filter(|r| in_all_replicates(r, &replicates, &intervals, min_cov)).count();
-            info!("{}: {} of {} LCBs present in all replicates", rep, n_shared, records.len());
-        }
-
-        let shared: Vec<&FastaRecord> = per_rep[0].iter()
-            .filter(|r| in_all_replicates(r, &replicates, &intervals, min_cov))
-            .collect();
-
-        let segments: Vec<FastaRecord> = shared.iter()
+        let segments: Vec<FastaRecord> = per_rep[0].iter()
             .flat_map(|r| shared_segments(r, &replicates, &intervals).into_iter().map(move |seg| segment_record(r, seg)))
             .filter(|r| r.seq.len() >= min_length)
             .collect();
-        info!("Trimmed {} shared LCBs to {} segments present in all replicates", shared.len(), segments.len());
+
+        let total_bp = |records: &[FastaRecord]| records.iter().map(|r| r.seq.len()).sum::<usize>();
+        let n_lcbs = segments.iter().map(|r| r.id().split_once(':').map_or(r.id(), |(lcb, _)| lcb)).collect::<HashSet<_>>().len();
+        info!("Trimmed rep_0 ({} LCBs, {} bp) to {} segments from {} LCBs ({} bp) present in all replicates",
+            per_rep[0].len(), total_bp(&per_rep[0]), segments.len(), n_lcbs, total_bp(&segments));
         segments
     }
 }

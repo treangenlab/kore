@@ -1,18 +1,18 @@
+use crate::util::FastaRecord;
+
 use log::*;
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 //IUPAC code indexed by a bitmask of the tied bases: A=1, C=2, G=4, T=8
 const IUPAC: &[u8; 16] = b"NACMGRSVTWYHKDBN";
-const LINE_WRAP: usize = 80;
 
-pub struct ConsensusStats {
-    pub written: usize,
-    pub total_bp: usize,
-    pub too_short: usize,
-    pub too_diverse: usize,
+//consensus of an LCB that passed the length filter
+pub struct ConsensusLcb {
+    pub record: FastaRecord,
+    pub diversity: f64,
 }
 
 pub struct Lcb {
@@ -127,38 +127,21 @@ pub fn lcb_diversity(lcb: &Lcb) -> f64 {
     variable as f64 / len as f64
 }
 
-//one consensus record per LCB that passes the length and diversity filters
-pub fn write_consensus_fasta(xmfa: &Path, out_fasta: &Path, prefix: &str, min_length: usize, max_diversity: f64) -> ConsensusStats {
-    let file = File::create(out_fasta).unwrap_or_else(|e| {
-        error!("Unable to create {}: {}", out_fasta.display(), e);
-        std::process::exit(1);
-    });
-    let mut writer = BufWriter::new(file);
-
-    let mut stats = ConsensusStats { written: 0, total_bp: 0, too_short: 0, too_diverse: 0 };
+//consensus of every LCB at least min_length long, and the number that were too short
+pub fn consensus_lcbs(xmfa: &Path, prefix: &str, min_length: usize) -> (Vec<ConsensusLcb>, usize) {
+    let mut lcbs = Vec::new();
+    let mut too_short = 0;
     let mut n_lcbs = 0;
     for_each_lcb(xmfa, |lcb| {
         n_lcbs += 1;
         let seq = lcb_consensus(&lcb);
         if seq.len() < min_length {
-            stats.too_short += 1;
+            too_short += 1;
             return;
         }
         let diversity = lcb_diversity(&lcb);
-        if diversity > max_diversity {
-            stats.too_diverse += 1;
-            return;
-        }
-
-        writeln!(writer, ">{}_lcb{} ref={}-{} n_genomes={} diversity={:.4}", prefix, n_lcbs, lcb.start, lcb.end, lcb.rows.len(), diversity).unwrap();
-        for chunk in seq.chunks(LINE_WRAP) {
-            writer.write_all(chunk).unwrap();
-            writer.write_all(b"\n").unwrap();
-        }
-        stats.written += 1;
-        stats.total_bp += seq.len();
+        let header = format!("{}_lcb{} ref={}-{} n_genomes={} diversity={:.4}", prefix, n_lcbs, lcb.start, lcb.end, lcb.rows.len(), diversity);
+        lcbs.push(ConsensusLcb { record: FastaRecord { header, seq }, diversity });
     });
-    writer.flush().unwrap();
-
-    stats
+    (lcbs, too_short)
 }

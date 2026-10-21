@@ -7,6 +7,7 @@ use crate::consts::KORE_VERSION;
 
 pub mod consts;
 pub mod build;
+pub mod cluster;
 pub mod estimate;
 pub mod lcb;
 pub mod replicates;
