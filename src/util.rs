@@ -133,14 +133,20 @@ impl FastaRecord {
     }
 }
 
+//plain or gzipped (.gz) fasta
 pub fn read_fasta(path: &Path) -> Vec<FastaRecord> {
     let file = File::open(path).unwrap_or_else(|e| {
         error!("Unable to open {}: {}", path.display(), e);
         std::process::exit(1);
     });
+    let reader: Box<dyn std::io::Read> = if path.extension().is_some_and(|e| e == "gz") {
+        Box::new(flate2::read::MultiGzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
 
     let mut records: Vec<FastaRecord> = Vec::new();
-    for line in BufReader::new(file).lines().map_while(Result::ok) {
+    for line in BufReader::new(reader).lines().map_while(Result::ok) {
         if let Some(header) = line.strip_prefix('>') {
             records.push(FastaRecord { header: header.to_string(), seq: Vec::new() });
         } else if let Some(record) = records.last_mut() {

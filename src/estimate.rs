@@ -21,9 +21,17 @@ fn check_args(args: &EstimateArgs) -> Vec<String> {
 
     let genomes = collect_genomes(&args.genomes, &args.file_input);
 
-    if !Path::new(&args.core).exists() {
-        error!("kore core does not exist: {}", args.core);
-        std::process::exit(1);
+    if let Some(core) = &args.core {
+        if !Path::new(core).exists() {
+            error!("kore core does not exist: {}", core);
+            std::process::exit(1);
+        }
+    }
+    if let Some(panel) = &args.panel {
+        if !Path::new(panel).join(crate::consts::PANEL_INDEX).exists() {
+            error!("kore panel not found (no {} in {})", crate::consts::PANEL_INDEX, panel);
+            std::process::exit(1);
+        }
     }
 
     if args.threads == 0 {
@@ -35,14 +43,14 @@ fn check_args(args: &EstimateArgs) -> Vec<String> {
 }
 
 //"GCF_000005845.2_genomic.fna.gz" -> "GCF_000005845.2_genomic"
-fn genome_name(path: &str) -> String {
+pub fn genome_name(path: &str) -> String {
     let name = Path::new(path).file_name().unwrap().to_string_lossy();
     let name = name.strip_suffix(".gz").unwrap_or(&name);
     Path::new(name).file_stem().unwrap().to_string_lossy().into_owned()
 }
 
 //minimap2 -c -x asm20 --secondary=yes -p 0.5 -N 20 -m 30 -s 40, indexed on the genome
-fn build_aligner(genome: &str, threads: usize) -> Aligner<Built> {
+pub fn build_aligner(genome: &str, threads: usize) -> Aligner<Built> {
     let mut aligner = Aligner::builder().asm20().with_cigar().with_index_threads(threads);
     aligner.mapopt.pri_ratio = MM_SECONDARY_RATIO;
     aligner.mapopt.best_n = MM_MAX_SECONDARY;
@@ -65,7 +73,7 @@ pub struct Hit {
 }
 
 //alignments of an LCB to the genome passing the identity/length filters
-fn map_lcb(aligner: &Aligner<Built>, lcb: &FastaRecord) -> Vec<Hit> {
+pub fn map_lcb(aligner: &Aligner<Built>, lcb: &FastaRecord) -> Vec<Hit> {
     let mappings = aligner.map(&lcb.seq, false, false, None, None, None).unwrap_or_else(|e| {
         error!("minimap2 failed to map {}: {}", lcb.id(), e);
         std::process::exit(1);
@@ -85,13 +93,13 @@ fn map_lcb(aligner: &Aligner<Built>, lcb: &FastaRecord) -> Vec<Hit> {
 }
 
 //hits for each LCB in the core, in core order
-fn map_genome(genome: &str, core: &[FastaRecord], threads: usize) -> Vec<Vec<Hit>> {
+pub fn map_genome(genome: &str, core: &[FastaRecord], threads: usize) -> Vec<Vec<Hit>> {
     let aligner = build_aligner(genome, threads);
     core.iter().map(|lcb| map_lcb(&aligner, lcb)).collect()
 }
 
 //percent of core bp covered by the hits
-fn nucleotide_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
+pub fn nucleotide_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
     let core_bp: usize = core.iter().map(|lcb| lcb.seq.len()).sum();
     let covered: usize = hits.iter()
         .map(|h| covered_bp(&h.iter().map(|x| (x.lcb_start, x.lcb_end)).collect::<Vec<_>>()))
@@ -109,12 +117,12 @@ fn lcb_present(lcb: &FastaRecord, hits: &[Hit]) -> bool {
 }
 
 //percent of core LCBs present
-fn lcb_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
+pub fn lcb_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
     let present = core.iter().zip(hits).filter(|(lcb, h)| lcb_present(lcb, h)).count();
     100.0 * present as f64 / core.len() as f64
 }
 
-fn create_csv(path: &Path) -> BufWriter<File> {
+pub fn create_csv(path: &Path) -> BufWriter<File> {
     let file = File::create(path).unwrap_or_else(|e| {
         error!("Unable to create {}: {}", path.display(), e);
         std::process::exit(1);
@@ -132,7 +140,7 @@ fn write_completeness(genomes: &[String], core: &[FastaRecord], hits: &[Vec<Vec<
 }
 
 //one row per alignment, LCBs with no alignment get a row with 0 coverage
-fn write_alignments(genomes: &[String], core: &[FastaRecord], hits: &[Vec<Vec<Hit>>], path: &Path) {
+pub fn write_alignments(genomes: &[String], core: &[FastaRecord], hits: &[Vec<Vec<Hit>>], path: &Path) {
     let mut writer = create_csv(path);
     writeln!(writer, "genome,lcb,contig,start,end,coverage,identity").unwrap();
     for (genome, genome_hits) in genomes.iter().zip(hits) {
@@ -152,9 +160,13 @@ fn write_alignments(genomes: &[String], core: &[FastaRecord], hits: &[Vec<Vec<Hi
 
 pub fn estimate(args: EstimateArgs) {
     let genomes = check_args(&args);
+    if args.panel.is_some() {
+        crate::contam::estimate_panel(&args, &genomes);
+        return;
+    }
     info!("kore v{} estimating completeness for {} genome(s)", KORE_VERSION, genomes.len());
 
-    let core = read_fasta(Path::new(&args.core));
+    let core = read_fasta(Path::new(args.core.as_ref().unwrap()));
     info!("Loaded core with {} LCBs ({} bp)", core.len(), core.iter().map(|lcb| lcb.seq.len()).sum::<usize>());
 
     let n_parallel = genomes.len().min(args.threads);

@@ -23,6 +23,7 @@ pub struct Cli {
 pub enum Mode {
     Build(BuildArgs), //Build --> core genome alignment (parsnp2) of a species' genomes + downstream analyses to build a kore db
     Estimate(EstimateArgs), //Estimate --> estimates completeness of assemblies against a kore db
+    Panel(PanelArgs), //Panel --> every species' core in one database (species detection and contamination)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -114,8 +115,21 @@ pub struct EstimateArgs {
     pub file_input: Option<String>,
 
     //DATABASE INPUT
-    #[clap(short='c', long="core", required = true, help_heading="DATABASE INPUT", help = "kore db (core.fasta from kore build)")]
-    pub core: String,
+    #[clap(short='c', long="core", required_unless_present = "panel", conflicts_with = "panel", help_heading="DATABASE INPUT", help = "kore db (core.fasta from kore build): completeness only")]
+    pub core: Option<String>,
+
+    #[clap(short='p', long="panel", help_heading="DATABASE INPUT", help = "kore panel folder (from kore panel): detects each assembly's species, estimates completeness against its core and contamination against every core")]
+    pub panel: Option<String>,
+
+    #[clap(short='s', long="species", requires = "panel", help_heading="DATABASE INPUT", help = "Species in the panel to use for every assembly instead of detecting it")]
+    pub species: Option<String>,
+
+    //CONTAMINATION
+    #[clap(long="call-breadth", default_value_t = DEFAULT_CALL_BREADTH, help_heading="CONTAMINATION", help="Min % of a foreign species' diagnostic core covered to call it present (--panel)")]
+    pub call_breadth: f64,
+
+    #[clap(long="call-lcbs", default_value_t = DEFAULT_CALL_LCBS, help_heading="CONTAMINATION", help="Min LCBs of a foreign species with diagnostic sequence covered to call it present (--panel)")]
+    pub call_lcbs: usize,
 
     //OUTPUT
     #[clap(short='o', long="output", default_value = DEFAULT_OUT_FOLDER, help_heading="OUTPUT", help="Folder to output all resulting files")]
@@ -131,6 +145,39 @@ pub struct EstimateArgs {
     pub debug: bool,
 
     //Verbose mode (prints most checkpoints)
+    #[clap(long = "verbose", help = "Verbose output (warning: very verbose)")]
+    pub verbose: bool,
+}
+
+#[derive(Args)]
+#[clap(about="Combine kore cores into a panel for species detection and contamination estimates", arg_required_else_help = true)]
+pub struct PanelArgs {
+
+    //INPUT
+    #[clap(short='i', long="input", required = true, help_heading="INPUT", help = "Tab-separated file with a header: species, core (core.fasta from kore build), genomes (.txt of the build genome paths, one per line), group (taxonomic group, e.g. GTDB family: masks are computed between species of the same group)")]
+    pub input: String,
+
+    //MASK
+    #[clap(long="mask-genomes", default_value_t = DEFAULT_MASK_GENOMES, help_heading="MASK", help="Max build genomes per species used to mask its relatives' cores (seeded sample when there are more)")]
+    pub mask_genomes: usize,
+
+    #[clap(long="mask-identity", default_value_t = MASK_IDENTITY, help_heading="MASK", help="Relative-core sequence aligning to a species' build genomes at >= this identity (%) is masked for that species")]
+    pub mask_identity: f64,
+
+    #[clap(long="seed", default_value_t = DEFAULT_SEED, help_heading="MASK", help="Seed for sampling mask genomes")]
+    pub seed: u64,
+
+    //OUTPUT
+    #[clap(short='o', long="output", default_value = DEFAULT_PANEL_OUTPUT, help_heading="OUTPUT", help="Output folder (panel.fasta, panel.mmi, species.tsv, cores/, masks/, kore.log)")]
+    pub output: String,
+
+    // OTHER PARAMETERS
+    #[clap(short, long="threads", default_value_t=DEFAULT_THREADS, help="Number of threads")]
+    pub threads: usize,
+
+    #[clap(long = "debug", help = "Debug output")]
+    pub debug: bool,
+
     #[clap(long = "verbose", help = "Verbose output (warning: very verbose)")]
     pub verbose: bool,
 }

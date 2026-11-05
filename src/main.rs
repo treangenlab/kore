@@ -7,6 +7,8 @@ use crate::consts::KORE_VERSION;
 
 pub mod consts;
 pub mod build;
+pub mod contam;
+pub mod panel;
 pub mod cluster;
 pub mod estimate;
 pub mod lcb;
@@ -21,6 +23,7 @@ fn main() {
     match args.mode {
         Mode::Build(build_args) => build::build(build_args),
         Mode::Estimate(estimate_args) => estimate::estimate(estimate_args),
+        Mode::Panel(panel_args) => panel::panel(panel_args),
     }
 
     let end = Instant::now();
