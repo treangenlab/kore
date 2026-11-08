@@ -5,41 +5,61 @@ use crate::consts::*;
 use log::*;
 
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
 
 use minimap2::{Aligner, Built};
 
-fn check_args(args: &EstimateArgs) -> Vec<String> {
+//what estimate runs against
+enum Target {
+    Db(PathBuf),                       //whole kore db: species detection + contamination
+    Species(PathBuf, String),          //one species' core from the db
+    Core(PathBuf),                     //the user's own core (kore build)
+}
+
+fn check_args(args: &EstimateArgs) -> (Vec<String>, Target) {
     // Log file lives inside the output folder and mirrors the terminal.
     let log_path = Path::new(&args.output).join(LOG_FILE);
     init_logging(log_level(args.verbose, args.debug), &log_path);
     print_banner();
 
     let genomes = collect_genomes(&args.genomes, &args.file_input);
-
-    if let Some(core) = &args.core {
-        if !Path::new(core).exists() {
-            error!("kore core does not exist: {}", core);
-            std::process::exit(1);
-        }
-    }
-    if let Some(panel) = &args.panel {
-        if !Path::new(panel).join(crate::consts::PANEL_INDEX).exists() {
-            error!("kore panel not found (no {} in {})", crate::consts::PANEL_INDEX, panel);
-            std::process::exit(1);
-        }
-    }
-
     if args.threads == 0 {
         error!("--threads must be at least 1");
         std::process::exit(1);
     }
 
-    genomes
+    if let Some(core) = &args.core {
+        if !Path::new(core).exists() {
+            error!("Core does not exist: {}", core);
+            std::process::exit(1);
+        }
+        return (genomes, Target::Core(PathBuf::from(core)));
+    }
+    let db = match args.db.clone().or_else(|| std::env::var(DB_ENV).ok()) {
+        Some(d) => PathBuf::from(d),
+        None => {
+            error!("No kore db given: use --db <folder> or set ${} (or --core for your own core)", DB_ENV);
+            std::process::exit(1);
+        }
+    };
+    if !db.join(DB_SPECIES).exists() {
+        error!("Not a kore db (no {} in {})", DB_SPECIES, db.display());
+        std::process::exit(1);
+    }
+    if let Some(sp) = &args.species {
+        let core = crate::aggregate::core_path(&db, &crate::taxonomy::slug(sp));
+        if !core.exists() {
+            error!("Species {} is not in the kore db {} (see {})", sp, db.display(), db.join(DB_SPECIES).display());
+            std::process::exit(1);
+        }
+        return (genomes, Target::Species(core, crate::taxonomy::slug(sp)));
+    }
+    if !crate::aggregate::index_path(&db).exists() {
+        error!("kore db index missing ({} in {})", AGGREGATE_INDEX, db.display());
+        std::process::exit(1);
+    }
+    (genomes, Target::Db(db))
 }
 
 //"GCF_000005845.2_genomic.fna.gz" -> "GCF_000005845.2_genomic"
@@ -122,6 +142,64 @@ pub fn lcb_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
     100.0 * present as f64 / core.len() as f64
 }
 
+//Does the assembly belong to the core's species? Per LCB the best alignment (largest aligned bp x identity) is taken;
+//the LCB is found if it covers >= SPECIES_MATCH_MIN_COVERAGE of the LCB. Matched when >= SPECIES_MATCH_FRACTION of
+//found LCBs pass their bar (match_bars: calibrated per LCB, at most SPECIES_MATCH_IDENTITY; >= SPECIES_MATCH_MIN_LCBS found).
+pub struct SpeciesMatch {
+    pub found: usize,
+    pub percent: f64, //% of found LCBs that pass their bar
+}
+
+impl SpeciesMatch {
+    pub fn matched(&self) -> bool {
+        self.found >= SPECIES_MATCH_MIN_LCBS && self.percent >= SPECIES_MATCH_FRACTION
+    }
+}
+
+//per LCB: identity of its best alignment (largest aligned bp x identity) when that alignment covers
+//>= SPECIES_MATCH_MIN_COVERAGE of the LCB (the LCB is found), else None
+pub fn best_lcb_identities(core: &[FastaRecord], hits: &[Vec<Hit>]) -> Vec<Option<f64>> {
+    core.iter().zip(hits).map(|(lcb, h)| {
+        h.iter().max_by(|a, b| {
+            let sa = (a.lcb_end - a.lcb_start + 1) as f64 * a.identity;
+            let sb = (b.lcb_end - b.lcb_start + 1) as f64 * b.identity;
+            sa.total_cmp(&sb)
+        }).filter(|b| 100.0 * (b.lcb_end - b.lcb_start + 1) as f64 / lcb.seq.len() as f64 >= SPECIES_MATCH_MIN_COVERAGE)
+          .map(|b| b.identity)
+    }).collect()
+}
+
+//per-LCB species-match bars, in core order: min(SPECIES_MATCH_IDENTITY, own-genome minimum - SPECIES_MATCH_MARGIN) from
+//the calibration.tsv next to the core; SPECIES_MATCH_IDENTITY for LCBs (or cores) without calibration
+pub fn match_bars(core_path: &Path, core: &[FastaRecord]) -> Vec<f64> {
+    let cal = core_path.parent().map(|d| d.join(CALIBRATION_LCBS)).unwrap_or_default();
+    let mut min_id: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    if let Ok(text) = std::fs::read_to_string(&cal) {
+        let mut lines = text.lines();
+        let header: Vec<&str> = lines.next().unwrap_or("").split('\t').collect();
+        if let (Some(cl), Some(cm)) = (header.iter().position(|h| *h == "lcb"), header.iter().position(|h| *h == "identity_min")) {
+            for l in lines {
+                let f: Vec<&str> = l.split('\t').collect();
+                if let (Some(lcb), Some(Ok(v))) = (f.get(cl), f.get(cm).map(|x| x.parse::<f64>())) {
+                    min_id.insert(lcb.to_string(), v);
+                }
+            }
+        }
+    }
+    if min_id.is_empty() {
+        debug!("No calibration for {}: species-match bar {}% for every LCB", core_path.display(), SPECIES_MATCH_IDENTITY);
+    }
+    core.iter().map(|l| min_id.get(l.id()).map_or(SPECIES_MATCH_IDENTITY,
+                                                  |m| SPECIES_MATCH_IDENTITY.min(m - SPECIES_MATCH_MARGIN))).collect()
+}
+
+pub fn species_match(core: &[FastaRecord], hits: &[Vec<Hit>], bars: &[f64]) -> SpeciesMatch {
+    let ids = best_lcb_identities(core, hits);
+    let found: Vec<(f64, f64)> = ids.iter().zip(bars).filter_map(|(id, bar)| id.map(|x| (x, *bar))).collect();
+    let pass = found.iter().filter(|(id, bar)| id >= bar).count();
+    SpeciesMatch { found: found.len(), percent: if found.is_empty() { 0.0 } else { 100.0 * pass as f64 / found.len() as f64 } }
+}
+
 pub fn create_csv(path: &Path) -> BufWriter<File> {
     let file = File::create(path).unwrap_or_else(|e| {
         error!("Unable to create {}: {}", path.display(), e);
@@ -130,68 +208,33 @@ pub fn create_csv(path: &Path) -> BufWriter<File> {
     BufWriter::new(file)
 }
 
-fn write_completeness(genomes: &[String], core: &[FastaRecord], hits: &[Vec<Vec<Hit>>], path: &Path) {
-    let mut writer = create_csv(path);
-    writeln!(writer, "genome,nucleotide_completeness,lcb_completeness").unwrap();
-    for (genome, h) in genomes.iter().zip(hits) {
-        writeln!(writer, "{},{:.4},{:.4}", genome_name(genome), nucleotide_completeness(core, h), lcb_completeness(core, h)).unwrap();
-    }
-    writer.flush().unwrap();
-}
-
-//one row per alignment, LCBs with no alignment get a row with 0 coverage
-pub fn write_alignments(genomes: &[String], core: &[FastaRecord], hits: &[Vec<Vec<Hit>>], path: &Path) {
-    let mut writer = create_csv(path);
-    writeln!(writer, "genome,lcb,contig,start,end,coverage,identity").unwrap();
-    for (genome, genome_hits) in genomes.iter().zip(hits) {
-        let name = genome_name(genome);
-        for (lcb, lcb_hits) in core.iter().zip(genome_hits) {
-            if lcb_hits.is_empty() {
-                writeln!(writer, "{},{},,,,0.0000,0.0000", name, lcb.id()).unwrap();
-            }
-            for hit in lcb_hits {
-                let coverage = 100.0 * (hit.lcb_end - hit.lcb_start + 1) as f64 / lcb.seq.len() as f64;
-                writeln!(writer, "{},{},{},{},{},{:.4},{:.4}", name, lcb.id(), hit.contig, hit.start, hit.end, coverage, hit.identity).unwrap();
-            }
-        }
-    }
-    writer.flush().unwrap();
-}
-
 pub fn estimate(args: EstimateArgs) {
-    let genomes = check_args(&args);
-    if args.panel.is_some() {
-        crate::contam::estimate_panel(&args, &genomes);
-        return;
-    }
-    info!("kore v{} estimating completeness for {} genome(s)", KORE_VERSION, genomes.len());
-
-    let core = read_fasta(Path::new(args.core.as_ref().unwrap()));
-    info!("Loaded core with {} LCBs ({} bp)", core.len(), core.iter().map(|lcb| lcb.seq.len()).sum::<usize>());
-
-    let n_parallel = genomes.len().min(args.threads);
-    let threads_per = (args.threads / n_parallel).max(1);
-
-    let next = AtomicUsize::new(0);
-    let results: Mutex<Vec<Vec<Vec<Hit>>>> = Mutex::new((0..genomes.len()).map(|_| Vec::new()).collect());
-    thread::scope(|s| {
-        for _ in 0..n_parallel {
-            s.spawn(|| loop {
-                let i = next.fetch_add(1, Ordering::SeqCst);
-                if i >= genomes.len() {
-                    break;
-                }
-                let hits = map_genome(&genomes[i], &core, threads_per);
-                info!("{}: {:.2}% nucleotide completeness, {:.2}% LCB completeness",
-                    genome_name(&genomes[i]), nucleotide_completeness(&core, &hits), lcb_completeness(&core, &hits));
-                results.lock().unwrap()[i] = hits;
-            });
+    let (genomes, target) = check_args(&args);
+    let out = PathBuf::from(&args.output);
+    let (core_path, name, source) = match target {
+        Target::Db(db) => {
+            crate::contam::estimate_db(&args, &genomes, &db);
+            return;
         }
-    });
-
-    let hits = results.into_inner().unwrap();
-    let out_dir = PathBuf::from(&args.output);
-    write_completeness(&genomes, &core, &hits, &out_dir.join(COMPLETENESS_CSV));
-    write_alignments(&genomes, &core, &hits, &out_dir.join(ALIGNMENTS_CSV));
-    info!("Wrote {} and {} to {}", COMPLETENESS_CSV, ALIGNMENTS_CSV, out_dir.display());
+        Target::Species(path, sp) => (path, sp, "given"),
+        Target::Core(path) => {
+            //name the species after the core's build folder (core.fasta in <name>/), else the file name
+            let p = Path::new(&path);
+            let name = if p.file_stem().is_some_and(|s| s == "core") {
+                p.parent().and_then(|d| d.file_name()).map(|s| s.to_string_lossy().into_owned())
+            } else {
+                p.file_stem().map(|s| s.to_string_lossy().into_owned())
+            }.unwrap_or_else(|| "core".into());
+            (path, name, "core")
+        }
+    };
+    let core = std::sync::Arc::new(read_fasta(&core_path));
+    let bars = match_bars(&core_path, &core);
+    info!("kore v{} estimating completeness for {} genome(s) against the {} core ({} LCBs, {} bp)", KORE_VERSION, genomes.len(),
+          name, core.len(), core.iter().map(|lcb| lcb.seq.len()).sum::<usize>());
+    warn!("Only the {} core is used: contamination from other species is not assessed (contamination = same-species \
+           redundancy only). Run without --species/--core to estimate contamination with the whole kore db", name);
+    let results = crate::contam::run_all(&genomes, args.threads,
+        |g, t| Some(crate::contam::analyse_single(&core, &bars, &name, source, g, t)));
+    crate::contam::write_report(&results, &out);
 }

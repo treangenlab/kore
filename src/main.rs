@@ -8,7 +8,9 @@ use crate::consts::KORE_VERSION;
 pub mod consts;
 pub mod build;
 pub mod contam;
-pub mod panel;
+pub mod download;
+pub mod aggregate;
+pub mod taxonomy;
 pub mod cluster;
 pub mod estimate;
 pub mod lcb;
@@ -22,8 +24,8 @@ fn main() {
     let args = cli::parse_args();
     match args.mode {
         Mode::Build(build_args) => build::build(build_args),
+        Mode::Download(download_args) => download::download(download_args),
         Mode::Estimate(estimate_args) => estimate::estimate(estimate_args),
-        Mode::Panel(panel_args) => panel::panel(panel_args),
     }
 
     let end = Instant::now();
