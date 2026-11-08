@@ -171,26 +171,42 @@ pub fn best_lcb_identities(core: &[FastaRecord], hits: &[Vec<Hit>]) -> Vec<Optio
 
 //per-LCB species-match bars, in core order: min(SPECIES_MATCH_IDENTITY, own-genome minimum - SPECIES_MATCH_MARGIN) from
 //the calibration.tsv next to the core; SPECIES_MATCH_IDENTITY for LCBs (or cores) without calibration
-pub fn match_bars(core_path: &Path, core: &[FastaRecord]) -> Vec<f64> {
+//calibration.tsv next to the core: lcb -> (identity_min, identity_median) in the species' own build genomes
+fn read_calibration(core_path: &Path) -> std::collections::HashMap<String, (f64, f64)> {
     let cal = core_path.parent().map(|d| d.join(CALIBRATION_LCBS)).unwrap_or_default();
-    let mut min_id: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut out = std::collections::HashMap::new();
     if let Ok(text) = std::fs::read_to_string(&cal) {
         let mut lines = text.lines();
         let header: Vec<&str> = lines.next().unwrap_or("").split('\t').collect();
-        if let (Some(cl), Some(cm)) = (header.iter().position(|h| *h == "lcb"), header.iter().position(|h| *h == "identity_min")) {
+        let col = |n: &str| header.iter().position(|h| *h == n);
+        if let (Some(cl), Some(cm), Some(cd)) = (col("lcb"), col("identity_min"), col("identity_median")) {
             for l in lines {
                 let f: Vec<&str> = l.split('\t').collect();
-                if let (Some(lcb), Some(Ok(v))) = (f.get(cl), f.get(cm).map(|x| x.parse::<f64>())) {
-                    min_id.insert(lcb.to_string(), v);
+                if let (Some(lcb), Some(Ok(mn)), Some(Ok(md))) = (f.get(cl), f.get(cm).map(|x| x.parse::<f64>()),
+                                                                 f.get(cd).map(|x| x.parse::<f64>())) {
+                    out.insert(lcb.to_string(), (mn, md));
                 }
             }
         }
     }
-    if min_id.is_empty() {
+    out
+}
+
+//per LCB, in core order: species-match bar = min(SPECIES_MATCH_IDENTITY, own-genome minimum - SPECIES_MATCH_MARGIN)
+//(SPECIES_MATCH_IDENTITY without calibration), and the LCB's median identity in the species' own genomes (None without)
+pub fn calibration(core_path: &Path, core: &[FastaRecord]) -> (Vec<f64>, Vec<Option<f64>>) {
+    let cal = read_calibration(core_path);
+    if cal.is_empty() {
         debug!("No calibration for {}: species-match bar {}% for every LCB", core_path.display(), SPECIES_MATCH_IDENTITY);
     }
-    core.iter().map(|l| min_id.get(l.id()).map_or(SPECIES_MATCH_IDENTITY,
-                                                  |m| SPECIES_MATCH_IDENTITY.min(m - SPECIES_MATCH_MARGIN))).collect()
+    core.iter().map(|l| match cal.get(l.id()) {
+        Some((mn, md)) => (SPECIES_MATCH_IDENTITY.min(mn - SPECIES_MATCH_MARGIN), Some(*md)),
+        None => (SPECIES_MATCH_IDENTITY, None),
+    }).unzip()
+}
+
+pub fn match_bars(core_path: &Path, core: &[FastaRecord]) -> Vec<f64> {
+    calibration(core_path, core).0
 }
 
 pub fn species_match(core: &[FastaRecord], hits: &[Vec<Hit>], bars: &[f64]) -> SpeciesMatch {

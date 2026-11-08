@@ -4,8 +4,9 @@
 //Per assembly, whole db:
 // 1. Every contig is mapped to all cores in the kore db (the aggregate) (secondaries kept, so every species' match is seen).
 // 2. Species: candidates are the species whose cores the aggregate scan covers most (fraction of core bp
-//    at >= SPECIES_IDENTITY). Each candidate's core is then mapped onto the assembly in kore's usual direction and
-//    scored as sum over LCBs of covered bp x identity of the LCB's best hit, over core bp; the best is the species. (The aggregate scan alone
+//    at >= SPECIES_IDENTITY). Each candidate's core is then mapped onto the assembly in kore's usual direction; the
+//    species is the candidate passing the species check whose found LCBs are most identical (length-weighted identity
+//    of each LCB's best hit), independent of how much of the core is present. (The aggregate scan alone
 //    is biased: minimap2 drops secondary hits scoring < 20 % of the best, so a species with short LCBs, such as
 //    E. coli, loses to a sister species with long LCBs over the same sequence.)
 // 3. Contig assignment: each contig goes to the species whose core it matches at the highest bp-weighted
@@ -28,8 +29,8 @@
 //    found LCBs pass their calibrated identity bar), every estimate is reported as NA with a warning.
 use crate::cli::*;
 use crate::consts::*;
-use crate::estimate::{Hit, SpeciesMatch, build_aligner, create_csv, genome_name, lcb_completeness, map_genome, map_lcb,
-                      nucleotide_completeness, species_match, match_bars};
+use crate::estimate::{Hit, SpeciesMatch, best_lcb_identities, build_aligner, create_csv, genome_name, lcb_completeness, map_genome, map_lcb,
+                      nucleotide_completeness, species_match, calibration};
 use crate::aggregate::*;
 use crate::util::*;
 
@@ -145,7 +146,7 @@ struct Db {
     index: HashMap<String, usize>,
     aligner: minimap2::Aligner<minimap2::Built>,
     cores: Mutex<HashMap<usize, Arc<Vec<FastaRecord>>>>,
-    bars: Mutex<HashMap<usize, Arc<Vec<f64>>>>,
+    cal: Mutex<HashMap<usize, Arc<(Vec<f64>, Vec<Option<f64>>)>>>,
     masks: Mutex<HashMap<usize, Arc<HashMap<String, Vec<(usize, usize)>>>>>,
 }
 
@@ -155,10 +156,11 @@ impl Db {
         c.entry(sp).or_insert_with(|| Arc::new(read_fasta(
             &core_path(&self.dir, &self.species[sp].name)))).clone()
     }
-    fn bars(&self, sp: usize) -> Arc<Vec<f64>> {
+    //(species-match bars, own-genome median identity) per LCB
+    fn cal(&self, sp: usize) -> Arc<(Vec<f64>, Vec<Option<f64>>)> {
         let core = self.core(sp);
-        let mut b = self.bars.lock().unwrap();
-        b.entry(sp).or_insert_with(|| Arc::new(match_bars(&core_path(&self.dir, &self.species[sp].name), &core))).clone()
+        let mut c = self.cal.lock().unwrap();
+        c.entry(sp).or_insert_with(|| Arc::new(calibration(&core_path(&self.dir, &self.species[sp].name), &core))).clone()
     }
     fn mask(&self, sp: usize) -> Arc<HashMap<String, Vec<(usize, usize)>>> {
         let mut m = self.masks.lock().unwrap();
@@ -200,28 +202,52 @@ fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs) -> Option
     let candidates: Vec<usize> = order.into_iter().enumerate()
         .take_while(|(i, s)| *i < SPECIES_CANDIDATES || (*i < 2 * SPECIES_CANDIDATES && coverage(*s) >= SPECIES_CANDIDATE_FRACTION * top))
         .map(|(_, s)| s).collect();
-    //verify candidates core -> assembly; score = covered core fraction x bp-weighted identity
+    //verify candidates core -> assembly. The candidates competing for the species are those whose alignments fall on the
+    //same assembly bases as the best-covered candidate's (SPECIES_SHARED_SEQUENCE: sister species do, a contaminant does
+    //not). Among them, the species is the one passing the species check whose found LCBs are most identical: identity of
+    //each LCB's best hit, weighted by LCB length (an ANI over the core). Measured on found LCBs only, so incompleteness
+    //does not matter. (Identity relative to each species' own median identity was tested and favoured diverse species.)
     let genome_aligner = build_aligner(genome, threads);
-    let mut best: Option<(usize, f64, Vec<Vec<Hit>>)> = None;
+    struct Cand { sp: usize, identity: f64, covered: f64, m: SpeciesMatch, hits: Vec<Vec<Hit>>, on: HashMap<String, Vec<(usize, usize)>> }
+    let mut cands: Vec<Cand> = Vec::new();
     for &c in &candidates {
         let core_c = db.core(c);
+        let cal = db.cal(c);
         let hits_c: Vec<Vec<Hit>> = core_c.iter().map(|l| map_lcb(&genome_aligner, l)).collect();
-        let cbp: usize = core_c.iter().map(|l| l.seq.len()).sum();
-        //per LCB: covered bp x identity of its best hit (second copies from a contaminant must not lower the score)
-        let mut matched = 0.0;
-        for h in &hits_c {
-            if let Some(best_id) = h.iter().map(|x| x.identity).max_by(|a, b| a.total_cmp(b)) {
-                matched += covered_bp(&h.iter().map(|x| (x.lcb_start, x.lcb_end)).collect::<Vec<_>>()) as f64 * best_id / 100.0;
+        let (mut num, mut den) = (0.0, 0.0);
+        for (lcb, id) in core_c.iter().zip(best_lcb_identities(&core_c, &hits_c)) {
+            if let Some(id) = id {
+                num += lcb.seq.len() as f64 * id;
+                den += lcb.seq.len() as f64;
             }
         }
-        let score = matched / cbp.max(1) as f64;
-        debug!("{}: candidate {} scan {:.2}% verified score {:.3}", genome_name(genome), db.species[c].name, coverage(c), score);
-        if best.as_ref().is_none_or(|b| score > b.1) {
-            best = Some((c, score, hits_c));
+        let identity = if den > 0.0 { num / den } else { f64::NEG_INFINITY };
+        let mut on: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+        for h in hits_c.iter().flatten() {
+            on.entry(h.contig.clone()).or_default().push((h.start, h.end));
         }
+        for iv in on.values_mut() {
+            *iv = merge_intervals(iv);
+        }
+        let covered = nucleotide_completeness(&core_c, &hits_c);
+        let m = species_match(&core_c, &hits_c, &cal.0);
+        debug!("{}: candidate {} scan {:.2}% covered {:.2}% identityity {:.3} over {} LCBs, match {:.1}% ({})", genome_name(genome),
+               db.species[c].name, coverage(c), covered, identity, m.found, m.percent, m.matched());
+        cands.push(Cand { sp: c, identity, covered, m, hits: hits_c, on });
     }
-    let (target, _, all_hits) = best?;
-    let target_match = species_match(&db.core(target), &all_hits, &db.bars(target));
+    let top = cands.iter().enumerate().max_by(|a, b| a.1.covered.total_cmp(&b.1.covered)).map(|(i, _)| i)?;
+    let shared = |c: &Cand| -> f64 {
+        let own: usize = c.on.values().map(|iv| covered_bp(iv)).sum();
+        let both: usize = c.on.iter().map(|(ctg, iv)| cands[top].on.get(ctg)
+            .map_or(0, |t| covered_bp(&intersect_intervals(iv, t)))).sum();
+        let top_own: usize = cands[top].on.values().map(|iv| covered_bp(iv)).sum();
+        both as f64 / own.min(top_own).max(1) as f64 //relative to the smaller footprint: a small core is a subset of a large one
+    };
+    let keep: Vec<bool> = cands.iter().enumerate().map(|(i, c)| i == top || shared(c) >= SPECIES_SHARED_SEQUENCE).collect();
+    let mut cands: Vec<Cand> = cands.into_iter().zip(keep).filter(|(_, k)| *k).map(|(c, _)| c).collect();
+    cands.sort_by(|a, b| b.m.matched().cmp(&a.m.matched()).then(b.identity.total_cmp(&a.identity)));
+    let best = cands.into_iter().next()?;
+    let (target, target_match, all_hits) = (best.sp, best.m, best.hits);
     if !target_match.matched() {
         warn_no_match(genome, &format!("any species in the kore db (closest: {})", db.species[target].name), &target_match);
     }
@@ -444,7 +470,7 @@ pub fn estimate_db(args: &EstimateArgs, genomes: &[String], db: &Path) {
           KORE_VERSION, genomes.len(), species.len());
     let aligner = aggregate_aligner(&index_path(db), args.threads);
     info!("Loaded {}", index_path(db).display());
-    let kdb = Db { dir: db.to_path_buf(), species, index, aligner, cores: Mutex::new(HashMap::new()), bars: Mutex::new(HashMap::new()), masks: Mutex::new(HashMap::new()) };
+    let kdb = Db { dir: db.to_path_buf(), species, index, aligner, cores: Mutex::new(HashMap::new()), cal: Mutex::new(HashMap::new()), masks: Mutex::new(HashMap::new()) };
     let results = run_all(genomes, args.threads, |g, t| analyse(&kdb, g, t, args));
     write_report(&results, Path::new(&args.output));
 }

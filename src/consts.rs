@@ -88,6 +88,9 @@ pub const UNLISTED_GROUP: &str = "unlisted"; //group of species not in GTDB (bui
 //CONTAMINATION (kore estimate, whole db)
 pub const SPECIES_IDENTITY: f64 = 95.0; //alignments >= this identity count towards a species' core coverage (aggregate scan)
 pub const SPECIES_CANDIDATES: usize = 5; //species with the highest aggregate-scan coverage verified core -> assembly
+pub const SPECIES_SHARED_SEQUENCE: f64 = 0.5; //candidates whose core alignments share >= this fraction (of the smaller
+//footprint) of assembly bases with the best-covered candidate's compete for the species (sister species align to the same contigs; a contaminant
+//aligns to other contigs, so it never competes); among them the most identical one passing the species check is the species
 pub const SPECIES_CANDIDATE_FRACTION: f64 = 0.5; //...plus any with >= this fraction of the best scan coverage (max 2x)
 pub const CONTIG_MIN_ALIGNED: usize = 1_000; //a contig is assigned to a species only on >= this many aligned bp
 pub const FOREIGN_IDENTITY: f64 = 98.0; //alignments >= this identity count towards a foreign species' diagnostic core
