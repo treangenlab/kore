@@ -159,8 +159,8 @@ fn find(parent: &mut [usize], x: usize) -> usize {
 
 //average linkage (UPGMA) by the nearest-neighbour chain algorithm, O(n^2), then cut so genomes
 //joined at <= max_dist share a cluster (same flat clusters as scipy fcluster criterion="distance").
-//Also returns the dendrogram's leaf order, so neighbouring leaves are close relatives.
-fn upgma_clusters(mut dist: Vec<f32>, n: usize, max_dist: f32) -> (Vec<usize>, Vec<usize>) {
+//Also returns the dendrogram's leaf order, so neighbouring leaves are close relatives, and every merge height.
+fn upgma_clusters(mut dist: Vec<f32>, n: usize, max_dist: f32) -> (Vec<usize>, Vec<usize>, Vec<f32>) {
     let mut size = vec![1usize; n];
     let mut active = vec![true; n];
     let mut merges: Vec<(usize, usize, f32)> = Vec::with_capacity(n.saturating_sub(1));
@@ -241,18 +241,27 @@ fn upgma_clusters(mut dist: Vec<f32>, n: usize, max_dist: f32) -> (Vec<usize>, V
         let next = label.len();
         *label.entry(r).or_insert(next)
     }).collect();
-    (labels, leaf_order)
+    (labels, leaf_order, merges.iter().map(|m| m.2).collect())
+}
+
+//flat clusters at an ANI cut from the merge heights: average linkage is monotone, so every merge at or below the
+//cut joins two clusters (same count as the labels upgma_clusters gives for that cut)
+fn clusters_at(heights: &[f32], n: usize, ani: f64) -> usize {
+    let cut = (100.0 - ani) as f32 + 1e-6;
+    n - heights.iter().filter(|&&d| d <= cut).count()
 }
 
 //genomes ordered for sampling: clusters at cluster_ani, then one genome from each cluster per round
 //(seeded order of genomes within a cluster) until every cluster is exhausted. Clusters are in seeded
 //random order, or with by_tree in dendrogram order (cluster ids then follow the tree, so consecutive ids
-//are close relatives). Returns the ordered genomes and each one's cluster.
+//are close relatives). Returns the ordered genomes with each one's cluster, and the number of clusters at each
+//REPORT_CLUSTER_ANI cut.
 pub fn cluster_order(genomes: &[String], cluster_ani: f64, skani_ani: Option<&Path>, out_dir: &Path, skani_dir: &Path,
-                     threads: usize, seed: u64, by_tree: bool) -> Vec<(String, usize)> {
+                     threads: usize, seed: u64, by_tree: bool) -> (Vec<(String, usize)>, Vec<(f64, usize)>) {
     let ani = ani_source(genomes, skani_ani, out_dir, skani_dir, threads);
     let n = genomes.len();
-    let (labels, leaf_order) = upgma_clusters(distance_matrix(&ani, genomes), n, (100.0 - cluster_ani) as f32 + 1e-6);
+    let (labels, leaf_order, heights) = upgma_clusters(distance_matrix(&ani, genomes), n, (100.0 - cluster_ani) as f32 + 1e-6);
+    let counts: Vec<(f64, usize)> = REPORT_CLUSTER_ANI.iter().map(|&a| (a, clusters_at(&heights, n, a))).collect();
 
     let mut clusters: Vec<Vec<usize>> = vec![Vec::new(); labels.iter().max().map_or(0, |m| m + 1)];
     for (i, &c) in labels.iter().enumerate() {
@@ -289,7 +298,7 @@ pub fn cluster_order(genomes: &[String], cluster_ani: f64, skani_ani: Option<&Pa
             }
         }
     }
-    ordered
+    (ordered, counts)
 }
 
 #[cfg(test)]
@@ -305,12 +314,18 @@ mod tests {
             2.0, 2.0, 0.0, 0.2,
             2.0, 2.0, 0.2, 0.0,
         ];
-        let (l, _) = upgma_clusters(d.clone(), 4, 0.5);
+        let (l, _, _) = upgma_clusters(d.clone(), 4, 0.5);
         assert_eq!(l[0], l[1]);
         assert_eq!(l[2], l[3]);
         assert_ne!(l[0], l[2]);
         assert!(upgma_clusters(d.clone(), 4, 0.05).0.iter().collect::<std::collections::HashSet<_>>().len() == 4);
-        assert!(upgma_clusters(d, 4, 5.0).0.iter().all(|&x| x == 0));
+        assert!(upgma_clusters(d.clone(), 4, 5.0).0.iter().all(|&x| x == 0));
+        //counts from merge heights match the labels at each cut (100 - ANI)
+        let (_, _, h) = upgma_clusters(d.clone(), 4, 0.5);
+        for (ani, cut) in [(99.95, 0.05f32), (99.5, 0.5), (95.0, 5.0)] {
+            let k = upgma_clusters(d.clone(), 4, cut + 1e-6).0.iter().collect::<std::collections::HashSet<_>>().len();
+            assert_eq!(clusters_at(&h, 4, ani), k);
+        }
     }
 
     #[test]
@@ -321,7 +336,7 @@ mod tests {
             0.5, 0.0, 0.5,
             1.6, 0.5, 0.0,
         ];
-        let (l, _) = upgma_clusters(d, 3, 0.6);
+        let (l, _, _) = upgma_clusters(d, 3, 0.6);
         assert_eq!(l[0], l[1]);
         assert_ne!(l[0], l[2]);
     }
@@ -335,7 +350,7 @@ mod tests {
             0.1, 2.0, 0.0, 2.0,
             2.0, 0.2, 2.0, 0.0,
         ];
-        let (_, order) = upgma_clusters(d, 4, 0.5);
+        let (_, order, _) = upgma_clusters(d, 4, 0.5);
         let pos = |x: usize| order.iter().position(|&o| o == x).unwrap();
         assert_eq!(order.len(), 4);
         assert_eq!(pos(0).abs_diff(pos(2)), 1);

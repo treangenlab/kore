@@ -3,6 +3,7 @@ pub const DEFAULT_THREADS: usize = 30; //number of threads
 pub const PARSNP_BIN: &str = "parsnp"; //parsnp2 executable (expected on PATH via the conda env)
 pub const SKANI_BIN: &str = "skani"; //skani executable for ANI clustering (expected on PATH via the conda env)
 pub const DEFAULT_CLUSTER_ANI: f64 = 99.5; //ANI (%) genomes are clustered at before sampling
+pub const REPORT_CLUSTER_ANI: [f64; 4] = [99.9, 99.5, 99.0, 98.0]; //ANI (%) cuts whose cluster counts are recorded (info.tsv, species.tsv; information only)
 pub const SKANI_MISSING_ANI: f64 = 80.0; //ANI given to pairs skani does not report (its reporting floor)
 pub const SAMPLED_GENOMES: &str = "sampled_genomes.tsv"; //genomes used in each replicate, with their cluster
 pub const SKANI_ANI: &str = "skani_ani.tsv.gz"; //all-vs-all skani ANI kept in the output folder and reused by later builds

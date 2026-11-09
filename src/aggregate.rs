@@ -376,7 +376,9 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
     let masks = masks.into_inner().unwrap();
     let mut table = BufWriter::new(File::create(db.join(DB_SPECIES)).unwrap());
     let lineage = ["gtdb_species", "domain", "phylum", "class", "order", "family", "genus"];
-    writeln!(table, "species\t{}\tgroup\tlcbs\tcore_bp\tgenome_size\tbuild_genomes\tmask_genomes\trelatives\tmasked_bp", lineage.join("\t")).unwrap();
+    let ckeys: Vec<String> = REPORT_CLUSTER_ANI.iter().map(|&a| crate::build::clusters_key(a)).collect();
+    writeln!(table, "species\t{}\tgroup\tlcbs\tcore_bp\tgenome_size\tbuild_genomes\t{}\tmask_genomes\trelatives\tmasked_bp", lineage.join("\t"),
+             ckeys.join("\t")).unwrap();
     for (i, s) in sps.iter().enumerate() {
         let mut w = BufWriter::new(File::create(db.join(DB_MASKS_DIR).join(format!("{}.tsv", s.name))).unwrap());
         writeln!(w, "lcb\tstart\tend").unwrap();
@@ -396,9 +398,11 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
         }
         fs::write(db.join(DB_MASKS_DIR).join(format!("{}{}", s.name, MASK_RELATIVES_SUFFIX)), rel).unwrap();
         let lin: Vec<String> = lineage.iter().map(|k| s.info.get(*k).cloned().unwrap_or_default()).collect();
-        writeln!(table, "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", s.name, lin.join("\t"), group(s), s.core.len(),
+        //cluster counts: NA for cores built without clustering or by older kore
+        let clusters: Vec<&str> = ckeys.iter().map(|k| s.info.get(k).map_or("NA", |v| v.as_str())).collect();
+        writeln!(table, "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", s.name, lin.join("\t"), group(s), s.core.len(),
                  s.core.iter().map(|l| l.seq.len()).sum::<usize>(), s.info.get("genome_size").map_or("0", |v| v),
-                 s.genomes.len(), s.genomes.len().min(n_mask_genomes), relatives[i].len(), masked).unwrap();
+                 s.genomes.len(), clusters.join("\t"), s.genomes.len().min(n_mask_genomes), relatives[i].len(), masked).unwrap();
     }
     table.flush().unwrap();
     //masks of species no longer in the db

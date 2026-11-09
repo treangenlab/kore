@@ -59,14 +59,22 @@ fn shuffle_genomes(mut genomes: Vec<String>, seed: u64) -> Vec<String> {
     genomes
 }
 
-//genomes in sampling order with their cluster (None when not clustered)
-fn order_genomes(genomes: Vec<String>, args: &BuildArgs, out_dir: &Path, skani_dir: &Path) -> Vec<(String, Option<usize>)> {
+//genomes in sampling order with their cluster (None when not clustered), and the cluster counts at the
+//REPORT_CLUSTER_ANI cuts (empty when not clustered)
+fn order_genomes(genomes: Vec<String>, args: &BuildArgs, out_dir: &Path, skani_dir: &Path) -> (Vec<(String, Option<usize>)>, Vec<(f64, usize)>) {
     match args.sampling {
-        Sampling::Cluster => cluster_order(&genomes, args.cluster_ani, args.skani_ani.as_deref().map(Path::new), out_dir, skani_dir,
-                                           args.threads, args.seed, args.replicate_grouping == Grouping::Clade)
-            .into_iter().map(|(g, c)| (g, Some(c))).collect(),
-        Sampling::Random => shuffle_genomes(genomes, args.seed).into_iter().map(|g| (g, None)).collect(),
+        Sampling::Cluster => {
+            let (ordered, counts) = cluster_order(&genomes, args.cluster_ani, args.skani_ani.as_deref().map(Path::new), out_dir,
+                                                  skani_dir, args.threads, args.seed, args.replicate_grouping == Grouping::Clade);
+            (ordered.into_iter().map(|(g, c)| (g, Some(c))).collect(), counts)
+        }
+        Sampling::Random => (shuffle_genomes(genomes, args.seed).into_iter().map(|g| (g, None)).collect(), Vec::new()),
     }
+}
+
+//info.tsv key for the cluster count at an ANI cut, e.g. clusters_99.9 (also the species.tsv column)
+pub fn clusters_key(ani: f64) -> String {
+    format!("clusters_{}", ani)
 }
 
 //replicate, genome and cluster of every genome used
@@ -638,7 +646,10 @@ fn build_species(args: &BuildArgs, out_dir: &Path) {
           out_dir.file_name().unwrap().to_string_lossy(), genomes.len());
 
     let tmp_dir = out_dir.join(INTERMEDIATE_DIR);
-    let ordered = order_genomes(genomes, args, out_dir, &tmp_dir.join("skani"));
+    let (ordered, cluster_counts) = order_genomes(genomes, args, out_dir, &tmp_dir.join("skani"));
+    if !cluster_counts.is_empty() {
+        info!("Clusters at {}", cluster_counts.iter().map(|(a, k)| format!("{}% ANI: {}", a, k)).collect::<Vec<_>>().join(", "));
+    }
     let ordered_clusters: Vec<(String, usize)> = ordered.iter().filter_map(|(g, c)| c.map(|c| (g.clone(), c))).collect();
     let cluster_of: HashMap<String, Option<usize>> = ordered.iter().cloned().collect();
     let genomes: Vec<String> = ordered.into_iter().map(|(g, _)| g).collect();
@@ -679,6 +690,9 @@ fn build_species(args: &BuildArgs, out_dir: &Path) {
     let mut info = fs::read_to_string(out_dir.join(SPECIES_INFO)).unwrap_or_default();
     info.push_str(&format!("genome_size\t{:.0}\ncore_lcbs\t{}\ncore_bp\t{}\ngenomes_checksum\t{}\n", size, core.len(),
                            core.iter().map(|r| r.seq.len()).sum::<usize>(), checksum(&out_dir.join(SPECIES_GENOMES))));
+    for (a, k) in &cluster_counts {
+        info.push_str(&format!("{}\t{}\n", clusters_key(*a), k));
+    }
     fs::write(out_dir.join(SPECIES_INFO), info).unwrap();
     let calib: Vec<String> = sampled.iter().take(CALIBRATION_N).cloned().collect();
     calibrate(&core, &calib, out_dir, args.threads);
