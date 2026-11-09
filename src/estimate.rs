@@ -13,7 +13,7 @@ use minimap2::{Aligner, Built};
 //what estimate runs against
 enum Target {
     Db(PathBuf),                       //whole kore db: species detection + contamination
-    Species(PathBuf, String),          //one species' core from the db
+    Species(PathBuf, String),          //whole kore db with the species given: contamination, no species detection
     Core(PathBuf),                     //the user's own core (kore build)
 }
 
@@ -47,17 +47,17 @@ fn check_args(args: &EstimateArgs) -> (Vec<String>, Target) {
         error!("Not a kore db (no {} in {})", DB_SPECIES, db.display());
         std::process::exit(1);
     }
-    if let Some(sp) = &args.species {
-        let core = crate::aggregate::core_path(&db, &crate::taxonomy::slug(sp));
-        if !core.exists() {
-            error!("Species {} is not in the kore db {} (see {})", sp, db.display(), db.join(DB_SPECIES).display());
-            std::process::exit(1);
-        }
-        return (genomes, Target::Species(core, crate::taxonomy::slug(sp)));
-    }
     if !crate::aggregate::index_path(&db).exists() {
         error!("kore db index missing ({} in {})", AGGREGATE_INDEX, db.display());
         std::process::exit(1);
+    }
+    if let Some(sp) = &args.species {
+        let slug = crate::taxonomy::slug(sp);
+        if !crate::aggregate::core_path(&db, &slug).exists() {
+            error!("Species {} is not in the kore db {} (see {})", sp, db.display(), db.join(DB_SPECIES).display());
+            std::process::exit(1);
+        }
+        return (genomes, Target::Species(db, slug));
     }
     (genomes, Target::Db(db))
 }
@@ -229,10 +229,13 @@ pub fn estimate(args: EstimateArgs) {
     let out = PathBuf::from(&args.output);
     let (core_path, name, source) = match target {
         Target::Db(db) => {
-            crate::contam::estimate_db(&args, &genomes, &db);
+            crate::contam::estimate_db(&args, &genomes, &db, None);
             return;
         }
-        Target::Species(path, sp) => (path, sp, "given"),
+        Target::Species(db, sp) => {
+            crate::contam::estimate_db(&args, &genomes, &db, Some(&sp));
+            return;
+        }
         Target::Core(path) => {
             //name the species after the core's build folder (core.fasta in <name>/), else the file name
             let p = Path::new(&path);
@@ -249,7 +252,7 @@ pub fn estimate(args: EstimateArgs) {
     info!("kore v{} estimating completeness for {} genome(s) against the {} core ({} LCBs, {} bp)", KORE_VERSION, genomes.len(),
           name, core.len(), core.iter().map(|lcb| lcb.seq.len()).sum::<usize>());
     warn!("Only the {} core is used: contamination from other species is not assessed (contamination = same-species \
-           redundancy only). Run without --species/--core to estimate contamination with the whole kore db", name);
+           redundancy only). Use --db (with --species if known) to estimate contamination with the whole kore db", name);
     let results = crate::contam::run_all(&genomes, args.threads,
         |g, t| Some(crate::contam::analyse_single(&core, &bars, &name, source, g, t)));
     crate::contam::write_report(&results, &out);

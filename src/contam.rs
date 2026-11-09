@@ -171,7 +171,8 @@ impl Db {
     }
 }
 
-fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs) -> Option<Result> {
+//given: the species (--species), the only candidate; otherwise the species is detected
+fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs, given: Option<usize>) -> Option<Result> {
     let contigs = read_fasta(Path::new(genome));
     let assembly_bp: usize = contigs.iter().map(|c| c.seq.len()).sum();
     let hits = map_to_aggregate(&db.aligner, &contigs, &db.index);
@@ -188,7 +189,8 @@ fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs) -> Option
     let coverage = |sp: usize| 100.0 * covered[sp] as f64 / db.species[sp].core_bp.max(1) as f64;
     let mut order: Vec<usize> = (0..db.species.len()).filter(|&s| covered[s] > 0).collect();
     order.sort_by(|&a, &b| coverage(b).total_cmp(&coverage(a)));
-    if order.is_empty() {
+    let source = if given.is_some() { "given" } else { "detected" };
+    if order.is_empty() && given.is_none() {
         warn!("{}: does not match any species in the kore db (no core aligned at >= {}% identity); estimates reported as {}",
               genome_name(genome), SPECIES_IDENTITY, NO_MATCH);
         return Some(Result {
@@ -198,10 +200,15 @@ fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs) -> Option
             divergent: 0.0, assembly_bp, core: Arc::new(Vec::new()), hits: Vec::new(),
         });
     }
-    let top = coverage(order[0]);
-    let candidates: Vec<usize> = order.into_iter().enumerate()
-        .take_while(|(i, s)| *i < SPECIES_CANDIDATES || (*i < 2 * SPECIES_CANDIDATES && coverage(*s) >= SPECIES_CANDIDATE_FRACTION * top))
-        .map(|(_, s)| s).collect();
+    let candidates: Vec<usize> = match given {
+        Some(sp) => vec![sp],
+        None => {
+            let top = coverage(order[0]);
+            order.into_iter().enumerate()
+                .take_while(|(i, s)| *i < SPECIES_CANDIDATES || (*i < 2 * SPECIES_CANDIDATES && coverage(*s) >= SPECIES_CANDIDATE_FRACTION * top))
+                .map(|(_, s)| s).collect()
+        }
+    };
     //verify candidates core -> assembly. The candidates competing for the species are those whose alignments fall on the
     //same assembly bases as the best-covered candidate's (SPECIES_SHARED_SEQUENCE: sister species do, a contaminant does
     //not). Among them, the species is the one passing the species check whose found LCBs are most identical: identity of
@@ -249,7 +256,9 @@ fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs) -> Option
     let best = cands.into_iter().next()?;
     let (target, target_match, all_hits) = (best.sp, best.m, best.hits);
     if !target_match.matched() {
-        warn_no_match(genome, &format!("any species in the kore db (closest: {})", db.species[target].name), &target_match);
+        let what = if given.is_some() { format!("the species {}", db.species[target].name) }
+                   else { format!("any species in the kore db (closest: {})", db.species[target].name) };
+        warn_no_match(genome, &what, &target_match);
     }
 
     //contig assignment: highest bp-weighted identity over >= CONTIG_MIN_ALIGNED aligned bp
@@ -339,7 +348,7 @@ fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs) -> Option
         .sum();
 
     Some(Result {
-        genome: genome_name(genome), species: db.species[target].name.clone(), species_source: "detected",
+        genome: genome_name(genome), species: db.species[target].name.clone(), species_source: source,
         species_coverage: coverage(target), species_match: target_match, foreign_assessed: true, completeness: nucleotide_completeness(&core, &kept),
         lcb_completeness: lcb_completeness(&core, &kept), redundancy: 100.0 * cov2 as f64 / core_bp.max(1) as f64,
         second_copy_identity: second, foreign, divergent_bp, divergent: 100.0 * divergent_bp as f64 / g_target,
@@ -462,16 +471,23 @@ pub fn write_report(results: &[Result], out: &Path) {
     info!("Wrote {} to {}", files, out.display());
 }
 
-//whole db: species detection and contamination against every core
-pub fn estimate_db(args: &EstimateArgs, genomes: &[String], db: &Path) {
+//whole db: species detection (unless given) and contamination against every core
+pub fn estimate_db(args: &EstimateArgs, genomes: &[String], db: &Path, given: Option<&str>) {
     let species = read_species(db);
     let index: HashMap<String, usize> = species.iter().enumerate().map(|(i, s)| (s.name.clone(), i)).collect();
     info!("kore v{} estimating completeness and contamination for {} genome(s) with the kore db ({} species)",
           KORE_VERSION, genomes.len(), species.len());
     let aligner = aggregate_aligner(&index_path(db), args.threads);
     info!("Loaded {}", index_path(db).display());
+    let given = given.map(|sp| *index.get(sp).unwrap_or_else(|| {
+        error!("Species {} is not in {}", sp, db.join(DB_SPECIES).display());
+        std::process::exit(1);
+    }));
+    if let Some(sp) = given {
+        info!("Species given: {} (no species detection)", species[sp].name);
+    }
     let kdb = Db { dir: db.to_path_buf(), species, index, aligner, cores: Mutex::new(HashMap::new()), cal: Mutex::new(HashMap::new()), masks: Mutex::new(HashMap::new()) };
-    let results = run_all(genomes, args.threads, |g, t| analyse(&kdb, g, t, args));
+    let results = run_all(genomes, args.threads, |g, t| analyse(&kdb, g, t, args, given));
     write_report(&results, Path::new(&args.output));
 }
 
