@@ -127,24 +127,10 @@ pub fn nucleotide_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
     100.0 * covered as f64 / core_bp as f64
 }
 
-//LCB is present if >= LCB_PRESENT_COV of it is covered by alignments >= LCB_PRESENT_IDENTITY
-fn lcb_present(lcb: &FastaRecord, hits: &[Hit]) -> bool {
-    let intervals: Vec<(usize, usize)> = hits.iter()
-        .filter(|h| h.identity >= LCB_PRESENT_IDENTITY)
-        .map(|h| (h.lcb_start, h.lcb_end))
-        .collect();
-    100.0 * covered_bp(&intervals) as f64 / lcb.seq.len() as f64 >= LCB_PRESENT_COV
-}
-
-//percent of core LCBs present
-pub fn lcb_completeness(core: &[FastaRecord], hits: &[Vec<Hit>]) -> f64 {
-    let present = core.iter().zip(hits).filter(|(lcb, h)| lcb_present(lcb, h)).count();
-    100.0 * present as f64 / core.len() as f64
-}
-
 //Does the assembly belong to the core's species? Per LCB the best alignment (largest aligned bp x identity) is taken;
 //the LCB is found if it covers >= SPECIES_MATCH_MIN_COVERAGE of the LCB. Matched when >= SPECIES_MATCH_FRACTION of
-//found LCBs pass their bar (match_bars: calibrated per LCB, at most SPECIES_MATCH_IDENTITY; >= SPECIES_MATCH_MIN_LCBS found).
+//found LCBs pass their bar (match_bars: calibrated per LCB, at most SPECIES_MATCH_IDENTITY; >= SPECIES_MATCH_MIN_LCBS found;
+//SPECIES_MATCH_FEW_FRACTION when fewer than SPECIES_MATCH_FEW_LCBS are found).
 pub struct SpeciesMatch {
     pub found: usize,
     pub percent: f64, //% of found LCBs that pass their bar
@@ -152,7 +138,8 @@ pub struct SpeciesMatch {
 
 impl SpeciesMatch {
     pub fn matched(&self) -> bool {
-        self.found >= SPECIES_MATCH_MIN_LCBS && self.percent >= SPECIES_MATCH_FRACTION
+        let need = if self.found < SPECIES_MATCH_FEW_LCBS { SPECIES_MATCH_FEW_FRACTION } else { SPECIES_MATCH_FRACTION };
+        self.found >= SPECIES_MATCH_MIN_LCBS && self.percent >= need
     }
 }
 
@@ -205,6 +192,17 @@ pub fn calibration(core_path: &Path, core: &[FastaRecord]) -> (Vec<f64>, Vec<Opt
     }).unzip()
 }
 
+//species divergence reference (%): median over calibrated LCBs of 100 - identity_min, i.e. how far the species' most
+//distant build genome sits from the core; None without calibration
+pub fn divergence_reference(core_path: &Path) -> Option<f64> {
+    let mut d: Vec<f64> = read_calibration(core_path).values().map(|(mn, _)| 100.0 - mn).collect();
+    if d.is_empty() {
+        return None;
+    }
+    d.sort_by(|a, b| a.total_cmp(b));
+    Some(if d.len() % 2 == 1 { d[d.len() / 2] } else { (d[d.len() / 2 - 1] + d[d.len() / 2]) / 2.0 })
+}
+
 pub fn match_bars(core_path: &Path, core: &[FastaRecord]) -> Vec<f64> {
     calibration(core_path, core).0
 }
@@ -249,11 +247,18 @@ pub fn estimate(args: EstimateArgs) {
     };
     let core = std::sync::Arc::new(read_fasta(&core_path));
     let bars = match_bars(&core_path, &core);
+    let div_ref = divergence_reference(&core_path);
     info!("kore v{} estimating completeness for {} genome(s) against the {} core ({} LCBs, {} bp)", KORE_VERSION, genomes.len(),
           name, core.len(), core.iter().map(|lcb| lcb.seq.len()).sum::<usize>());
     warn!("Only the {} core is used: contamination from other species is not assessed (contamination = same-species \
            redundancy only). Use --db (with --species if known) to estimate contamination with the whole kore db", name);
+    //the species' genome sizes from info.tsv next to the core (a kore build folder), for the length columns
+    let info: std::collections::HashMap<String, f64> = Path::new(&core_path).parent()
+        .and_then(|d| std::fs::read_to_string(d.join(SPECIES_INFO)).ok()).unwrap_or_default().lines()
+        .filter_map(|l| l.split_once('\t').and_then(|(k, v)| v.parse().ok().map(|v| (k.to_string(), v)))).collect();
+    let size = |k: &str| info.get(k).copied().unwrap_or(f64::NAN);
+    let sizes = (size("genome_size"), size("genome_size_min"), size("genome_size_max"));
     let results = crate::contam::run_all(&genomes, args.threads,
-        |g, t| Some(crate::contam::analyse_single(&core, &bars, &name, source, g, t)));
-    crate::contam::write_report(&results, &out);
+        |g, t| Some(crate::contam::analyse_single(&core, &bars, &name, source, sizes, div_ref, g, t)));
+    crate::contam::write_report(&results, &out, args.alignments);
 }

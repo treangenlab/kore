@@ -36,8 +36,6 @@ pub const MM_MIN_CHAIN_SCORE: i32 = 30; //minimap2 -m, asm20 default drops short
 pub const MM_MIN_DP_SCORE: i32 = 40; //minimap2 -s, asm20 default drops short LCBs
 pub const MIN_ALN_IDENTITY: f64 = 80.0; //min identity (%) of an alignment to count towards coverage
 pub const MIN_ALN_LEN: i32 = 100; //min alignment block length to count towards coverage
-pub const LCB_PRESENT_COV: f64 = 80.0; //min coverage (%) of an LCB for it to count as present
-pub const LCB_PRESENT_IDENTITY: f64 = 90.0; //min identity (%) of alignments counted for LCB presence
 
 //SPECIES MATCH (is the assembly the core's species at all? otherwise completeness is NA)
 //Per LCB, its best alignment (largest aligned bp x identity); the LCB is found if that alignment covers
@@ -54,6 +52,11 @@ pub const SPECIES_MATCH_MARGIN: f64 = 0.5; //an LCB's bar sits this far below it
 pub const SPECIES_MATCH_FRACTION: f64 = 60.0; //min % of found LCBs that pass their bar
 pub const SPECIES_MATCH_MIN_COVERAGE: f64 = 50.0; //min % of an LCB its best alignment covers for the LCB to be found
 pub const SPECIES_MATCH_MIN_LCBS: usize = 10; //fewer found LCBs than this: no evidence for the species
+//With few found LCBs the match needs more of them to pass: a different species (absent from the db, or a sister) aligns
+//only its most conserved LCBs to the core, typically 10-30 of them, of which 60-80 % still pass. ATB (406k genomes, vs
+//sylph / GTDB r232): < 50 found and < 90 % passing removed 124 of 175 wrong-species calls and no >= 90 %-complete call.
+pub const SPECIES_MATCH_FEW_LCBS: usize = 50; //below this many found LCBs the match needs SPECIES_MATCH_FEW_FRACTION
+pub const SPECIES_MATCH_FEW_FRACTION: f64 = 90.0;
 pub const NO_MATCH: &str = "NA"; //reported in place of estimates when the assembly does not match the species
 
 //KORE DB (kore build -o <db>): one folder per species core plus the aggregate of all of them
@@ -91,12 +94,29 @@ pub const SPECIES_IDENTITY: f64 = 95.0; //alignments >= this identity count towa
 pub const SPECIES_CANDIDATES: usize = 5; //species with the highest aggregate-scan coverage verified core -> assembly
 pub const SPECIES_SHARED_SEQUENCE: f64 = 0.5; //candidates whose core alignments share >= this fraction (of the smaller
 //footprint) of assembly bases with the best-covered candidate's compete for the species (sister species align to the same contigs; a contaminant
-//aligns to other contigs, so it never competes); among them the most identical one passing the species check is the species
+//aligns to other contigs, so it never competes); among those passing the species check, the highest match percent (then identity) is the species
 pub const SPECIES_CANDIDATE_FRACTION: f64 = 0.5; //...plus any with >= this fraction of the best scan coverage (max 2x)
+pub const SPECIES_GENUS_CANDIDATES: usize = 10; //...plus up to this many more species of the candidates' genera (by scan
+//coverage): the scan keeps secondary alignments only within AGGREGATE_SECONDARY_RATIO of the best, so a species whose core is cut
+//into short LCBs (a diverse species, e.g. E. coli) can be crowded out of the scan by sister species with long LCBs. Verified
+//only when no candidate passes the species check with >= SPECIES_CONFIDENT_MATCH % of its found LCBs
+pub const SPECIES_CONFIDENT_MATCH: f64 = 98.0;
 pub const CONTIG_MIN_ALIGNED: usize = 1_000; //a contig is assigned to a species only on >= this many aligned bp
 pub const FOREIGN_IDENTITY: f64 = 98.0; //alignments >= this identity count towards a foreign species' diagnostic core
 pub const DEFAULT_CALL_BREADTH: f64 = 1.0; //min % of a foreign species' diagnostic core covered to call it present
 pub const DEFAULT_CALL_LCBS: usize = 10; //min LCBs with >= CALL_LCB_BP diagnostic bp covered to call a foreign species
 pub const CALL_LCB_BP: usize = 500; //diagnostic bp an LCB needs covered to count towards DEFAULT_CALL_LCBS
-pub const DIVERGENT_IDENTITY: f64 = 95.0; //contigs whose best core match is below this are from a relative with no core
+pub const LENGTH_FLAG_SLACK: f64 = 0.1;
+//report.csv kore_divergence_flag 'high': the genome is further from the species core than the species' own build genomes
+//(a clade they did not sample; its completeness can read low). Species reference = median over core LCBs of
+//100 - identity_min (calibration.tsv: the most distant build genome per LCB); 'high' above reference + margin.
+//Validation: 0 of 1,023 build genomes flagged (an absolute 2 % flagged 55, all ~100 % complete: diverse species such as
+//Borrelia, Ralstonia, Streptomyces); ATB CheckM2-complete genomes: 148 flagged, 82 % of them > 2 pp below CheckM2.
+pub const DIVERGENCE_FLAG_MARGIN: f64 = 0.5;
+pub const DIVERGENCE_FLAG_FALLBACK: f64 = 2.0; //absolute threshold (%) for cores without calibration
+//report.csv kore_core_fraction_flag only at >= this completeness (%): in smaller fragments the core fraction is noise
+//(ATB test: 3 % of CheckM2-clean assemblies < 40 % complete flagged 'low', none at >= 50 %)
+pub const CORE_FRACTION_FLAG_MIN_COMPLETENESS: f64 = 50.0; //report.csv kore_length_flag 'long': assembly > longest build genome + this x median
+//genome size (sequence the contamination estimate cannot see: species outside the db, plasmids, non-bacterial DNA)
+pub const REDUNDANT_IDENTITY_MIN: f64 = 0.5; //kore_contamination_redundant_identity reported only above this % redundancy
 pub const CONTAMINANTS_CSV: &str = "contaminants.csv"; //every foreign species considered, per genome

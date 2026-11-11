@@ -578,6 +578,12 @@ pub fn build(args: BuildArgs) {
     }
 }
 
+//(shortest, longest) of all build genomes: the length range for report.csv kore_length_flag
+pub fn genome_size_range(genomes: &[String]) -> (f64, f64) {
+    let l: Vec<f64> = genomes.iter().map(|g| read_fasta(Path::new(g)).iter().map(|c| c.seq.len()).sum::<usize>() as f64).collect();
+    (l.iter().cloned().fold(f64::INFINITY, f64::min), l.iter().cloned().fold(0.0, f64::max))
+}
+
 //median genome length of the genomes used for the core
 pub fn genome_size(genomes: &[String]) -> f64 {
     let mut l: Vec<f64> = genomes.iter().map(|g| read_fasta(Path::new(g)).iter().map(|c| c.seq.len()).sum::<usize>() as f64).collect();
@@ -687,7 +693,9 @@ fn build_species(args: &BuildArgs, out_dir: &Path) {
     info!("Final core: {} LCBs ({} bp)", core.len(), core.iter().map(|r| r.seq.len()).sum::<usize>());
 
     let size = genome_size(&sampled);
+    let (size_min, size_max) = genome_size_range(&genomes);
     let mut info = fs::read_to_string(out_dir.join(SPECIES_INFO)).unwrap_or_default();
+    info.push_str(&format!("genome_size_min\t{:.0}\ngenome_size_max\t{:.0}\n", size_min, size_max));
     info.push_str(&format!("genome_size\t{:.0}\ncore_lcbs\t{}\ncore_bp\t{}\ngenomes_checksum\t{}\n", size, core.len(),
                            core.iter().map(|r| r.seq.len()).sum::<usize>(), checksum(&out_dir.join(SPECIES_GENOMES))));
     for (a, k) in &cluster_counts {

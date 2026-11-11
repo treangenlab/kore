@@ -37,6 +37,9 @@ pub struct DbSpecies {
     pub lcbs: usize,
     pub core_bp: usize,
     pub genome_size: f64, //median length of the species' build genomes
+    pub genome_size_min: f64, //shortest build genome (NaN in dbs without the column)
+    pub genome_size_max: f64, //longest build genome (NaN in dbs without the column)
+    pub genus: String, //GTDB genus (empty in dbs without the column)
 }
 
 //core of a species in a db (older dbs: cores/<sp>.fasta)
@@ -120,10 +123,16 @@ pub fn read_species(db: &Path) -> Vec<DbSpecies> {
         std::process::exit(1);
     });
     let (cs, cg, cl, cb, cz) = (col("species"), col("group"), col("lcbs"), col("core_bp"), col("genome_size"));
+    let cgen = header.iter().position(|h| h == "genus");
+    let cmin = header.iter().position(|h| h == "genome_size_min");
+    let cmax = header.iter().position(|h| h == "genome_size_max");
     lines.filter(|l| !l.is_empty()).map(|l| {
         let f: Vec<&str> = l.split('\t').collect();
         DbSpecies { name: f[cs].to_string(), group: f[cg].to_string(), lcbs: f[cl].parse().unwrap(),
-                    core_bp: f[cb].parse().unwrap(), genome_size: f[cz].parse().unwrap() }
+                    core_bp: f[cb].parse().unwrap(), genome_size: f[cz].parse().unwrap(),
+                    genome_size_min: cmin.and_then(|i| f.get(i)).and_then(|v| v.parse().ok()).unwrap_or(f64::NAN),
+                    genome_size_max: cmax.and_then(|i| f.get(i)).and_then(|v| v.parse().ok()).unwrap_or(f64::NAN),
+                    genus: cgen.and_then(|i| f.get(i)).map_or(String::new(), |g| g.to_string()) }
     }).collect()
 }
 
@@ -191,6 +200,7 @@ fn fill_missing(sps: &mut [Sp], threads: usize) {
     let tax = need_lineage.then(crate::taxonomy::Taxonomy::load);
     let need_calib: Vec<usize> = (0..sps.len()).filter(|&i| !sps[i].dir.join(CALIBRATION_LCBS).exists()).collect();
     let need_size: Vec<usize> = (0..sps.len()).filter(|&i| !sps[i].info.contains_key("genome_size")).collect();
+    fill_size_range(sps, threads);
     if tax.is_none() && need_calib.is_empty() && need_size.is_empty() {
         return;
     }
@@ -251,6 +261,41 @@ fn fill_missing(sps: &mut [Sp], threads: usize) {
         info.push_str(&format!("genome_size\t{:.0}\n", size));
         fs::write(sps[i].dir.join(SPECIES_INFO), info).unwrap();
         sps[i].info.insert("genome_size".into(), format!("{:.0}", size));
+    }
+}
+
+//length range of every build genome (genome_size_min/max in info.tsv) for species built before kore recorded it
+fn fill_size_range(sps: &mut [Sp], threads: usize) {
+    let need: Vec<usize> = (0..sps.len()).filter(|&i| !sps[i].info.contains_key("genome_size_max")).collect();
+    if need.is_empty() {
+        return;
+    }
+    info!("Recording the genome length range of {} species (all build genomes)", need.len());
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let out: Mutex<Vec<(usize, f64, f64)>> = Mutex::new(Vec::new());
+    let sps_ref: &[Sp] = sps;
+    thread::scope(|sc| {
+        for _ in 0..threads.max(1).min(need.len()) {
+            sc.spawn(|| loop {
+                let k = next.fetch_add(1, Ordering::SeqCst);
+                if k >= need.len() { break; }
+                let i = need[k];
+                let (a, b) = crate::build::genome_size_range(&sps_ref[i].genomes);
+                out.lock().unwrap().push((i, a, b));
+                let d = done.fetch_add(1, Ordering::SeqCst) + 1;
+                if d % 100 == 0 || d == need.len() {
+                    info!("Genome length range: {}/{} species", d, need.len());
+                }
+            });
+        }
+    });
+    for (i, a, b) in out.into_inner().unwrap() {
+        let mut info = fs::read_to_string(sps[i].dir.join(SPECIES_INFO)).unwrap_or_default();
+        info.push_str(&format!("genome_size_min\t{:.0}\ngenome_size_max\t{:.0}\n", a, b));
+        fs::write(sps[i].dir.join(SPECIES_INFO), info).unwrap();
+        sps[i].info.insert("genome_size_min".into(), format!("{:.0}", a));
+        sps[i].info.insert("genome_size_max".into(), format!("{:.0}", b));
     }
 }
 
@@ -377,7 +422,7 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
     let mut table = BufWriter::new(File::create(db.join(DB_SPECIES)).unwrap());
     let lineage = ["gtdb_species", "domain", "phylum", "class", "order", "family", "genus"];
     let ckeys: Vec<String> = REPORT_CLUSTER_ANI.iter().map(|&a| crate::build::clusters_key(a)).collect();
-    writeln!(table, "species\t{}\tgroup\tlcbs\tcore_bp\tgenome_size\tbuild_genomes\t{}\tmask_genomes\trelatives\tmasked_bp", lineage.join("\t"),
+    writeln!(table, "species\t{}\tgroup\tlcbs\tcore_bp\tgenome_size\tgenome_size_min\tgenome_size_max\tbuild_genomes\t{}\tmask_genomes\trelatives\tmasked_bp", lineage.join("\t"),
              ckeys.join("\t")).unwrap();
     for (i, s) in sps.iter().enumerate() {
         let mut w = BufWriter::new(File::create(db.join(DB_MASKS_DIR).join(format!("{}.tsv", s.name))).unwrap());
@@ -400,8 +445,9 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
         let lin: Vec<String> = lineage.iter().map(|k| s.info.get(*k).cloned().unwrap_or_default()).collect();
         //cluster counts: NA for cores built without clustering or by older kore
         let clusters: Vec<&str> = ckeys.iter().map(|k| s.info.get(k).map_or("NA", |v| v.as_str())).collect();
-        writeln!(table, "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", s.name, lin.join("\t"), group(s), s.core.len(),
+        writeln!(table, "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", s.name, lin.join("\t"), group(s), s.core.len(),
                  s.core.iter().map(|l| l.seq.len()).sum::<usize>(), s.info.get("genome_size").map_or("0", |v| v),
+                 s.info.get("genome_size_min").map_or("NA", |v| v), s.info.get("genome_size_max").map_or("NA", |v| v),
                  s.genomes.len(), clusters.join("\t"), s.genomes.len().min(n_mask_genomes), relatives[i].len(), masked).unwrap();
     }
     table.flush().unwrap();

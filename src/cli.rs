@@ -178,8 +178,10 @@ pub struct EstimateArgs {
     pub call_lcbs: usize,
 
     //OUTPUT
-    #[clap(short='o', long="output", default_value = DEFAULT_OUT_FOLDER, help_heading="OUTPUT", help="Output folder (report.csv, contaminants.csv, alignments.csv, kore.log)")]
+    #[clap(short='o', long="output", default_value = DEFAULT_OUT_FOLDER, help_heading="OUTPUT", help="Output folder (report.csv, contaminants.csv, kore.log; alignments.csv with --alignments)")]
     pub output: String,
+    #[clap(long="alignments", help_heading="OUTPUT", help="Also write alignments.csv: every core LCB alignment in every assembly (large: ~100 KB per assembly)")]
+    pub alignments: bool,
 
     // OTHER PARAMETERS
     //Number of threads
