@@ -30,7 +30,7 @@ pub const DEFAULT_OUT_FOLDER: &str = "kore_output"; //folder for estimate output
 pub const REPORT_CSV: &str = "report.csv"; //per genome report: species, completeness, contamination
 pub const DB_ENV: &str = "KORE_DB"; //environment variable holding the default kore db folder
 pub const ALIGNMENTS_CSV: &str = "alignments.csv"; //every LCB alignment in every genome
-pub const MM_SECONDARY_RATIO: f32 = 0.5; //minimap2 -p, looser than default so second copies are still reported
+pub const MM_SECONDARY_RATIO: f32 = 0.2; //minimap2 -p, low enough that partial second copies (core LCBs cut by a contig end) are still reported
 pub const MM_MAX_SECONDARY: i32 = 20; //minimap2 -N
 pub const MM_MIN_CHAIN_SCORE: i32 = 30; //minimap2 -m, asm20 default drops short LCBs
 pub const MM_MIN_DP_SCORE: i32 = 40; //minimap2 -s, asm20 default drops short LCBs
@@ -77,7 +77,9 @@ pub const DB_SEP: char = '|'; //separates species and LCB in aggregate sequence 
 pub const AGGREGATE_SECONDARY_RATIO: f32 = 0.2; //minimap2 -p against the aggregate: every relative's core must still be reported
 pub const AGGREGATE_MAX_SECONDARY: i32 = 100; //minimap2 -N against the aggregate
 pub const DEFAULT_MASK_GENOMES: usize = 100; //max build genomes per species used for its mask (seeded sample)
-pub const MASK_IDENTITY: f64 = 97.0; //relative-core sequence found at >= this identity in a species' own genomes is masked for it
+pub const MASK_IDENTITY: f64 = 95.0; //relative-core sequence found at >= this identity in a species' own genomes is masked for it (= FOREIGN_IDENTITY)
+pub const MASK_TILE: usize = 5_000; //masks: build genomes cut into tiles of this length (contig-sized, as detection sees assemblies)
+pub const MASK_TILE_STEP: usize = 2_500; //...starting every this many bp (tiles overlap by half)
 pub const MIN_DIAGNOSTIC_BP: usize = 10_000; //a relative with less diagnostic core than this cannot be told apart from the target
 pub const DEFAULT_MIN_GENOMES: usize = 5; //species with fewer genomes in a --species-table are skipped
 pub const DEFAULT_CORES_AT_ONCE: usize = 1; //species cores built at the same time (threads are split between them)
@@ -102,7 +104,7 @@ pub const SPECIES_GENUS_CANDIDATES: usize = 10; //...plus up to this many more s
 //only when no candidate passes the species check with >= SPECIES_CONFIDENT_MATCH % of its found LCBs
 pub const SPECIES_CONFIDENT_MATCH: f64 = 98.0;
 pub const CONTIG_MIN_ALIGNED: usize = 1_000; //a contig is assigned to a species only on >= this many aligned bp
-pub const FOREIGN_IDENTITY: f64 = 98.0; //alignments >= this identity count towards a foreign species' diagnostic core
+pub const FOREIGN_IDENTITY: f64 = 95.0; //alignments >= this identity count towards a foreign species' diagnostic core (masks are built at the same identity)
 pub const DEFAULT_CALL_BREADTH: f64 = 1.0; //min % of a foreign species' diagnostic core covered to call it present
 pub const DEFAULT_CALL_LCBS: usize = 10; //min LCBs with >= CALL_LCB_BP diagnostic bp covered to call a foreign species
 pub const CALL_LCB_BP: usize = 500; //diagnostic bp an LCB needs covered to count towards DEFAULT_CALL_LCBS

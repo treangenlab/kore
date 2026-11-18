@@ -4,9 +4,11 @@
 //  <db>/aggregate.mmi     minimap2 (asm20) index of aggregate.fasta (species detection, contamination)
 //  <db>/species.tsv       one row per species: GTDB lineage, mask group (family), core size, genome size, masks
 //  <db>/masks/<sp>.tsv    (lcb, start, end): the parts of its relatives' cores that species <sp>'s own build genomes
-//                         carry at >= MASK_IDENTITY. Relatives = other species of the same GTDB family. Mapped in
-//                         kore's usual direction (each relative LCB onto each build genome, secondaries kept), so
-//                         relatives never compete for the same genome region and short LCBs are not dropped.
+//                         carry at >= MASK_IDENTITY. Relatives = other species of the same GTDB family. Built the way
+//                         contamination is detected: each build genome is cut into contig-sized tiles (MASK_TILE,
+//                         every MASK_TILE_STEP bp) mapped onto the aggregate exactly as kore estimate maps contigs, so
+//                         whatever a clean genome of <sp> would hit at the foreign identity bar is masked (judging
+//                         whole relative LCBs by their average identity instead missed locally identical stretches).
 //  <db>/masks/<sp>.relatives.tsv  which relatives (and core checksums) the mask covers: rerunning the aggregate
 //                         only maps relatives that are new or whose core changed, so adding a species is cheap.
 //
@@ -299,6 +301,26 @@ fn fill_size_range(sps: &mut [Sp], threads: usize) {
     }
 }
 
+//contig-sized pieces of a genome for its masks: MASK_TILE bp starting every MASK_TILE_STEP bp along each replicon
+fn tile_genome(contigs: &[FastaRecord]) -> Vec<FastaRecord> {
+    let mut tiles = Vec::new();
+    for c in contigs {
+        let n = c.seq.len();
+        let mut start = 0;
+        loop {
+            let end = (start + MASK_TILE).min(n);
+            if end > start {
+                tiles.push(FastaRecord { header: format!("{}_{}", c.id(), start), seq: c.seq[start..end].to_vec() });
+            }
+            if end >= n {
+                break;
+            }
+            start += MASK_TILE_STEP;
+        }
+    }
+    tiles
+}
+
 fn mask_genomes(genomes: &[String], max: usize, seed: u64) -> Vec<String> {
     let mut g: Vec<String> = genomes.to_vec();
     g.sort();
@@ -368,7 +390,7 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
         let rel_file = db.join(DB_MASKS_DIR).join(format!("{}{}", s.name, MASK_RELATIVES_SUFFIX));
         let previous: HashMap<String, String> = fs::read_to_string(&rel_file).unwrap_or_default().lines()
             .filter_map(|l| l.split_once('\t').map(|(a, b)| (a.to_string(), b.to_string()))).collect();
-        let own = format!("{}:{}:{}", checksum(&s.dir.join(SPECIES_GENOMES)), n_mask_genomes, mask_identity);
+        let own = format!("{}:{}:{}:tiles{}/{}", checksum(&s.dir.join(SPECIES_GENOMES)), n_mask_genomes, mask_identity, MASK_TILE, MASK_TILE_STEP);
         let same_self = previous.get("self") == Some(&own);
         //relatives whose mask rows are still valid: same own genomes and settings, same relative core
         let valid: HashSet<&str> = relatives[i].iter()
@@ -384,6 +406,9 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
           relatives.iter().filter(|r| !r.is_empty()).count(), todo.iter().filter(|t| !t.is_empty()).count(), jobs.len());
 
     let masks: Mutex<Vec<HashMap<String, Vec<(usize, usize)>>>> = Mutex::new(kept);
+    //one aggregate index shared by every thread: tiles are mapped exactly as kore estimate maps contigs
+    let agg = if jobs.is_empty() { None } else { Some(aggregate_aligner(&db.join(AGGREGATE_INDEX), threads)) };
+    let species_index: HashMap<String, usize> = sps.iter().enumerate().map(|(i, s)| (s.name.clone(), i)).collect();
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
     thread::scope(|s| {
@@ -394,15 +419,12 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
                     break;
                 }
                 let (i, genome) = &jobs[j];
-                let genome_aligner = crate::estimate::build_aligner(genome, 1);
+                let tiles = tile_genome(&read_fasta(Path::new(genome)));
+                let rel: HashSet<usize> = todo[*i].iter().copied().collect();
                 let mut local: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
-                for &rel in &todo[*i] {
-                    for lcb in &sps[rel].core {
-                        for h in crate::estimate::map_lcb(&genome_aligner, lcb) {
-                            if h.identity >= mask_identity {
-                                local.entry(format!("{}{}{}", sps[rel].name, DB_SEP, lcb.id())).or_default().push((h.lcb_start, h.lcb_end));
-                            }
-                        }
+                for h in map_to_aggregate(agg.as_ref().unwrap(), &tiles, &species_index) {
+                    if rel.contains(&h.species) && h.identity() >= mask_identity {
+                        local.entry(h.lcb).or_default().push((h.lcb_start, h.lcb_end));
                     }
                 }
                 let mut m = masks.lock().unwrap();
@@ -437,7 +459,8 @@ pub fn aggregate(db: &Path, threads: usize, n_mask_genomes: usize, mask_identity
             }
         }
         w.flush().unwrap();
-        let mut rel = format!("self\t{}:{}:{}\n", checksum(&s.dir.join(SPECIES_GENOMES)), n_mask_genomes, mask_identity);
+        let mut rel = format!("self\t{}:{}:{}:tiles{}/{}\n", checksum(&s.dir.join(SPECIES_GENOMES)), n_mask_genomes, mask_identity,
+                              MASK_TILE, MASK_TILE_STEP);
         for &r in &relatives[i] {
             rel.push_str(&format!("{}\t{}\n", sps[r].name, sps[r].core_sum));
         }

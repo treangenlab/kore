@@ -10,8 +10,9 @@
 //    up to SPECIES_GENUS_CANDIDATES more species of the candidates' genera are verified too: the aggregate scan alone is
 //    biased (minimap2 drops secondary hits scoring < 20 % of the best, so a species with short LCBs, such as E. coli, can
 //    lose to a sister species with long LCBs over the same sequence).
-// 3. Contig assignment: each contig goes to the species whose core it matches at the highest bp-weighted
-//    identity over >= CONTIG_MIN_ALIGNED aligned bp (the target species competes too). A contig therefore counts
+// 3. Contig assignment, target first: a contig whose alignments to the target core mostly meet the target's calibrated
+//    per-LCB bars belongs to the target; any other contig goes to the species whose core it matches at the highest
+//    bp-weighted identity over >= CONTIG_MIN_ALIGNED aligned bp (the target species competes too). A contig therefore counts
 //    for one species only, and a contaminant is not split across its sister species.
 // 4. Foreign species S (S != target): breadth = % of S's diagnostic core (S's core minus the target's mask:
 //    the parts the target's own genomes carry) covered at >= FOREIGN_IDENTITY by contigs assigned to S.
@@ -334,6 +335,37 @@ fn analyse(db: &Db, genome: &str, threads: usize, args: &EstimateArgs, given: Op
         };
         if better {
             winner.insert(c, (sp, id, bp));
+        }
+    }
+
+    //target first: a contig stays with the target if >= half of its target-aligned bp is in alignments meeting the
+    //target's calibrated per-LCB species-match bars, i.e. it lies within the target species' own variation; only
+    //contigs the target cannot explain are left to the foreign species they match best
+    {
+        let core_t = db.core(target);
+        let cal_t = db.cal(target);
+        let idx: HashMap<&str, usize> = core_t.iter().enumerate().map(|(i, r)| (r.id(), i)).collect();
+        let mut pass: HashMap<usize, (usize, usize)> = HashMap::new(); //contig -> (bp meeting bars, bp aligned to target)
+        for h in hits.iter().filter(|h| h.species == target) {
+            let name = h.lcb.split(DB_SEP).nth(1).unwrap_or("");
+            if let Some(&i) = idx.get(name) {
+                let e = pass.entry(h.contig).or_insert((0, 0));
+                e.1 += h.block;
+                if h.identity() >= cal_t.0[i] {
+                    e.0 += h.block;
+                }
+            }
+        }
+        for (&c, w) in winner.iter_mut() {
+            if w.0 != target {
+                if let Some(&(p, t)) = pass.get(&c) {
+                    if t >= CONTIG_MIN_ALIGNED && 2 * p >= t {
+                        if let Some(&(bp, m)) = agg.get(&(c, target)) {
+                            *w = (target, 100.0 * m as f64 / bp as f64, bp);
+                        }
+                    }
+                }
+            }
         }
     }
 
