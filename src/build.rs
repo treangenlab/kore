@@ -353,8 +353,8 @@ fn absolute(p: &str) -> String {
     std::path::absolute(p).map(|x| x.to_string_lossy().into_owned()).unwrap_or_else(|_| p.to_string())
 }
 
-//--species-table: genome path <TAB> species per line (a header line is skipped)
-fn read_species_table(path: &str) -> Vec<(String, String)> {
+//--species-table (kore build and kore estimate): genome path <TAB> species per line (a header line is skipped)
+pub fn read_species_table(path: &str) -> Vec<(String, String)> {
     let file = File::open(path).unwrap_or_else(|e| {
         error!("Unable to open --species-table {}: {}", path, e);
         std::process::exit(1);

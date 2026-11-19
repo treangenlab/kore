@@ -163,6 +163,9 @@ pub struct EstimateArgs {
     #[clap(long="file-input", help_heading="ASSEMBLY INPUT", help = "Path to .txt file containing paths to each assembly, one line per file")]
     pub file_input: Option<String>,
 
+    #[clap(long="species-table", conflicts_with_all = ["genomes", "file_input", "species", "core"], help_heading="ASSEMBLY INPUT", help = "Tab-separated file of assembly path and species (skips species detection)")]
+    pub species_table: Option<String>,
+
     //DATABASE
     #[clap(short='d', long="db", help_heading="DATABASE", help = "kore db folder (default: $KORE_DB)")]
     pub db: Option<String>,
@@ -170,7 +173,8 @@ pub struct EstimateArgs {
     #[clap(short='s', long="species", conflicts_with = "core", help_heading="DATABASE", help = "Species of every assembly (skips species detection)")]
     pub species: Option<String>,
 
-    #[clap(short='c', long="core", conflicts_with = "db", help_heading="DATABASE", help = "Use a single core from kore build instead of a db (no foreign contamination)")]
+    //hidden: estimate against a single core without a db (completeness and redundancy only)
+    #[clap(short='c', long="core", conflicts_with = "db", hide = true, help = "Use a single core from kore build instead of a db (no foreign contamination)")]
     pub core: Option<String>,
 
     //CONTAMINATION

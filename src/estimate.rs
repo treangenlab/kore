@@ -13,7 +13,8 @@ use minimap2::{Aligner, Built};
 //what estimate runs against
 enum Target {
     Db(PathBuf),                       //whole kore db: species detection + contamination
-    Species(PathBuf, String),          //whole kore db with the species given: contamination, no species detection
+    Species(PathBuf, Vec<String>),     //whole kore db with each genome's species given (--species or --species-table):
+                                       //contamination, no species detection
     Core(PathBuf),                     //the user's own core (kore build)
 }
 
@@ -23,7 +24,15 @@ fn check_args(args: &EstimateArgs) -> (Vec<String>, Target) {
     init_logging(log_level(args.verbose, args.debug), &log_path);
     print_banner();
 
-    let genomes = collect_genomes(&args.genomes, &args.file_input);
+    //--species-table: genomes and their species from the table; otherwise -g/--file-input
+    let table = args.species_table.as_ref().map(|t| crate::build::read_species_table(t));
+    let genomes = match &table {
+        Some(rows) => {
+            let paths: Vec<String> = rows.iter().map(|(g, _)| g.clone()).collect();
+            collect_genomes(&paths, &None)
+        }
+        None => collect_genomes(&args.genomes, &args.file_input),
+    };
     if args.threads == 0 {
         error!("--threads must be at least 1");
         std::process::exit(1);
@@ -39,7 +48,7 @@ fn check_args(args: &EstimateArgs) -> (Vec<String>, Target) {
     let db = match args.db.clone().or_else(|| std::env::var(DB_ENV).ok()) {
         Some(d) => PathBuf::from(d),
         None => {
-            error!("No kore db given: use --db <folder> or set ${} (or --core for your own core)", DB_ENV);
+            error!("No kore db given: use --db <folder> or set ${}", DB_ENV);
             std::process::exit(1);
         }
     };
@@ -51,13 +60,22 @@ fn check_args(args: &EstimateArgs) -> (Vec<String>, Target) {
         error!("kore db index missing ({} in {})", AGGREGATE_INDEX, db.display());
         std::process::exit(1);
     }
-    if let Some(sp) = &args.species {
-        let slug = crate::taxonomy::slug(sp);
-        if !crate::aggregate::core_path(&db, &slug).exists() {
-            error!("Species {} is not in the kore db {} (see {})", sp, db.display(), db.join(DB_SPECIES).display());
+    //one species per genome: from the table, or --species for all of them
+    let given: Option<Vec<String>> = match (&table, &args.species) {
+        (Some(rows), _) => Some(rows.iter().map(|(_, s)| crate::taxonomy::slug(s)).collect()),
+        (None, Some(sp)) => Some(vec![crate::taxonomy::slug(sp); genomes.len()]),
+        (None, None) => None,
+    };
+    if let Some(given) = given {
+        let mut absent: Vec<&String> = given.iter().filter(|s| !crate::aggregate::core_path(&db, s).exists()).collect();
+        absent.sort();
+        absent.dedup();
+        if !absent.is_empty() {
+            error!("{} species not in the kore db {} (see {}): {}", absent.len(), db.display(), db.join(DB_SPECIES).display(),
+                   absent.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
             std::process::exit(1);
         }
-        return (genomes, Target::Species(db, slug));
+        return (genomes, Target::Species(db, given));
     }
     (genomes, Target::Db(db))
 }
@@ -230,8 +248,8 @@ pub fn estimate(args: EstimateArgs) {
             crate::contam::estimate_db(&args, &genomes, &db, None);
             return;
         }
-        Target::Species(db, sp) => {
-            crate::contam::estimate_db(&args, &genomes, &db, Some(&sp));
+        Target::Species(db, given) => {
+            crate::contam::estimate_db(&args, &genomes, &db, Some(&given));
             return;
         }
         Target::Core(path) => {

@@ -587,23 +587,39 @@ pub fn write_report(results: &[Result], out: &Path, alignments: bool) {
     info!("Wrote {} to {}", files.join(", "), out.display());
 }
 
-//whole db: species detection (unless given) and contamination against every core
-pub fn estimate_db(args: &EstimateArgs, genomes: &[String], db: &Path, given: Option<&str>) {
+//whole db: species detection (unless given) and contamination against every core.
+//given: one species per genome, in genome order (--species or --species-table)
+pub fn estimate_db(args: &EstimateArgs, genomes: &[String], db: &Path, given: Option<&[String]>) {
     let species = read_species(db);
     let index: HashMap<String, usize> = species.iter().enumerate().map(|(i, s)| (s.name.clone(), i)).collect();
     info!("kore v{} estimating completeness and contamination for {} genome(s) with the kore db ({} species)",
           KORE_VERSION, genomes.len(), species.len());
     let aligner = aggregate_aligner(&index_path(db), args.threads);
     info!("Loaded {}", index_path(db).display());
-    let given = given.map(|sp| *index.get(sp).unwrap_or_else(|| {
-        error!("Species {} is not in {}", sp, db.join(DB_SPECIES).display());
-        std::process::exit(1);
-    }));
-    if let Some(sp) = given {
-        info!("Species given: {} (no species detection)", species[sp].name);
+    //genome path -> given species index (a path listed twice must name the same species)
+    let mut given_of: HashMap<&str, usize> = HashMap::new();
+    if let Some(given) = given {
+        for (g, sp) in genomes.iter().zip(given) {
+            let i = *index.get(sp).unwrap_or_else(|| {
+                error!("Species {} is not in {}", sp, db.join(DB_SPECIES).display());
+                std::process::exit(1);
+            });
+            if given_of.insert(g.as_str(), i).is_some_and(|prev| prev != i) {
+                error!("{} is listed with more than one species", g);
+                std::process::exit(1);
+            }
+        }
+        let mut names: Vec<&str> = given_of.values().map(|&i| species[i].name.as_str()).collect();
+        names.sort();
+        names.dedup();
+        if names.len() == 1 {
+            info!("Species given: {} (no species detection)", names[0]);
+        } else {
+            info!("Species given for every genome: {} species (no species detection)", names.len());
+        }
     }
     let kdb = Db { dir: db.to_path_buf(), species, index, aligner, cores: Mutex::new(HashMap::new()), cal: Mutex::new(HashMap::new()), divref: Mutex::new(HashMap::new()), masks: Mutex::new(HashMap::new()) };
-    let results = run_all(genomes, args.threads, |g, t| analyse(&kdb, g, t, args, given));
+    let results = run_all(genomes, args.threads, |g, t| analyse(&kdb, g, t, args, given_of.get(g).copied()));
     write_report(&results, Path::new(&args.output), args.alignments);
 }
 
