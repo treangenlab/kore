@@ -1,13 +1,24 @@
-# kore
+# *kore* - bacterial genome completeness and contamination estimation
+
+> [!TIP]
+> Also check out the [wiki](https://github.com/treangenlab/kore/wiki) for more detailed information on bronko!
+
 *kore* is a bacterial genome completeness and contamination estimator using core-genomes. It is pretty much a stand-in replacement for BUSCO/CheckM/CheckM2. 
 
 kore is intended for use for species with existing built core genomes in our database, not for distant relatives or novel species. In that case, we still recommend using CheckM2.  
+
+## Why use *kore*
+1. Accuracy -- *kore* is nearly 1-2 points better on MAE than existing tools, and had lower per-species bias for most species.
+2. Speed -- *kore* is nearly 2-3x faster than existing approaches, and more if you run large batches of genomes altogether 
+3. Annotation free -- *kore* does not require any annotations, it simply matches DNA to DNA
+4. Robust to errors and assembly N50 -- *kore* is more robust to common assembly quality issues, with predictions not being affected nearly at all
+
 ## Usage
 
 kore has three commands:
 
 ```
-kore build     # build a core for one species from its genomes (species not in the kore db)
+kore build     # build a core for one or more species from its genomes (species not in the kore db)
 kore download  # download species cores or the whole kore db (not available yet)
 kore estimate  # completeness and contamination of assemblies
 ```
@@ -70,3 +81,9 @@ kore_db/
   masks/               per species, the parts of its relatives' cores its own genomes carry
   cores/<species>/     core.fasta, core_lcbs.csv, genomes.txt, info.tsv, calibration.tsv, kore.log
 ```
+
+## Issues
+*kore* is still in early versions and we welcome any feedback, suggestions, or feature requests. If you run into any issues, please email Ryan Doughty at rdd4@rice.edu or raise an issue on github
+
+## AI Usage Declaration
+Portions of the code base were generated or edited using Claude. All outputs were reviewed and edited as appropriate by the authors. The authors take full responsibility for the accuracy, integrity, and originality of the code, analyses, and content presented in this repository.
