@@ -107,11 +107,12 @@ To add species to an existing database (including ours), use `-f/--force`. Speci
 Run `kore build --help` or `kore estimate --help` for every parameter. The defaults are what we used in the paper.
 
 #### Description of Output Files
-`kore estimate` writes the following to the output folder (`-o`):
-- `report.csv` -- one row per assembly: species, completeness, contamination (total, same species, other species and which species), LCBs found, and quality flags (divergence from the species' core, assembly length and core fraction compared to the species' genomes)
-- `contaminants.csv` -- every other species considered for each assembly, and whether it was called
-- `alignments.csv` -- every core alignment in every assembly (only with `--alignments`)
+`kore estimate` writes the following tab-separated files to the output folder (`-o`):
+- `report.tsv` -- one row per assembly (columns below)
+- `contaminants.tsv` -- every other species considered for each assembly, and whether it was called
+- `alignments.tsv` -- every core alignment in every assembly (only with `--alignments`)
 - `kore.log` -- the log, including the command that was run
+
 
 `kore build` writes a database folder:
 ```
@@ -119,7 +120,7 @@ kore_db/
   species.tsv          one row per species: GTDB lineage, core size, genome size, masks
   aggregate.fasta/.mmi every core together (species detection and contamination)
   masks/               per species, the parts of its relatives' cores its own genomes carry
-  cores/<species>/     core.fasta, core_lcbs.csv, genomes.txt, info.tsv, calibration.tsv, kore.log
+  cores/<species>/     core.fasta, core_lcbs.tsv, genomes.txt, info.tsv, calibration.tsv, kore.log
 ```
 
 ## Issues
