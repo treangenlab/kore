@@ -39,7 +39,7 @@ pub enum Sampling {
 }
 
 #[derive(Args)]
-#[clap(about="Build a kore db: species cores from their genomes, aggregated for species detection and contamination", arg_required_else_help = true)]
+#[clap(about="Build a kore db by generating species cores from high quality genomes", arg_required_else_help = true)]
 pub struct BuildArgs {
 
     //INPUT
@@ -150,7 +150,7 @@ pub struct DownloadArgs {
 }
 
 #[derive(Args)]
-#[clap(about="Estimate completeness and contamination of assemblies with the kore db", arg_required_else_help = true)]
+#[clap(about="Estimate completeness and contamination of assemblies with a kore db", arg_required_else_help = true)]
 pub struct EstimateArgs {
 
     //ASSEMBLY INPUT
