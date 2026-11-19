@@ -1,7 +1,7 @@
 # *kore* - bacterial genome completeness and contamination estimation
 
 > [!TIP]
-> Also check out the [wiki](https://github.com/treangenlab/kore/wiki) for more detailed information on bronko!
+> Also check out the [wiki](https://github.com/treangenlab/kore/wiki) for more detailed information on *kore*!
 
 *kore* is a bacterial genome completeness and contamination estimator using core-genomes. It is pretty much a stand-in replacement for BUSCO/CheckM/CheckM2. 
 
