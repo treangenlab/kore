@@ -1,4 +1,4 @@
-# *kore* - bacterial genome completeness and contamination estimation
+# *kore* - accurate and robust bacterial genome completeness and contamination estimation
 
 ## Introduction
 *kore* is a bacterial genome completeness and contamination estimator that utilizes species specific core genomes for it's estimations. It is pretty much a stand-in replacement for BUSCO/CheckM/CheckM2.
