@@ -232,7 +232,7 @@ pub fn species_match(core: &[FastaRecord], hits: &[Vec<Hit>], bars: &[f64]) -> S
     SpeciesMatch { found: found.len(), percent: if found.is_empty() { 0.0 } else { 100.0 * pass as f64 / found.len() as f64 } }
 }
 
-pub fn create_csv(path: &Path) -> BufWriter<File> {
+pub fn create_tsv(path: &Path) -> BufWriter<File> {
     let file = File::create(path).unwrap_or_else(|e| {
         error!("Unable to create {}: {}", path.display(), e);
         std::process::exit(1);

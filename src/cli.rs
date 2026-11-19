@@ -188,7 +188,7 @@ pub struct EstimateArgs {
     #[clap(short='o', long="output", default_value = DEFAULT_OUT_FOLDER, help_heading="OUTPUT", help="Folder to output all resulting files")]
     pub output: String,
 
-    #[clap(long="alignments", help_heading="OUTPUT", help="Also output alignments.csv of every core alignment (~100 KB per assembly)")]
+    #[clap(long="alignments", help_heading="OUTPUT", help="Also output alignments.tsv of every core alignment (~100 KB per assembly)")]
     pub alignments: bool,
 
     // OTHER PARAMETERS

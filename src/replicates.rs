@@ -146,23 +146,23 @@ pub fn rename_core(core: &mut [FastaRecord]) {
     }
 }
 
-//"lcb1 ... n_genomes=25 diversity=0.0123" -> one csv row
-fn csv_row(record: &FastaRecord) -> String {
+//"lcb1 ... n_genomes=25 diversity=0.0123" -> one tsv row
+fn tsv_row(record: &FastaRecord) -> String {
     let field = |key: &str| record.header.split_whitespace()
         .find_map(|f| f.strip_prefix(key))
         .unwrap_or("");
-    [record.id(), &record.seq.len().to_string(), field("diversity="), field("n_genomes=")].join(",")
+    [record.id(), &record.seq.len().to_string(), field("diversity="), field("n_genomes=")].join("\t")
 }
 
-pub fn write_core_csv(core: &[FastaRecord], path: &Path) {
+pub fn write_core_tsv(core: &[FastaRecord], path: &Path) {
     let file = File::create(path).unwrap_or_else(|e| {
         error!("Unable to create {}: {}", path.display(), e);
         std::process::exit(1);
     });
     let mut writer = BufWriter::new(file);
-    writeln!(writer, "id,length,diversity,n_genomes").unwrap();
+    writeln!(writer, "id\tlength\tdiversity\tn_genomes").unwrap();
     for record in core {
-        writeln!(writer, "{}", csv_row(record)).unwrap();
+        writeln!(writer, "{}", tsv_row(record)).unwrap();
     }
     writer.flush().unwrap();
 }

@@ -23,13 +23,13 @@ pub const DIVERSITY_PERCENTILE: f64 = 95.0; //percentile of LCB diversity (LCBs 
 pub const DEFAULT_REPLICATE_IDENTITY: f64 = 95.0; //min blast identity (%) for an LCB hit in another replicate
 pub const DEFAULT_BUILD_OUTPUT: &str = "kore_build"; //folder for build outputs
 pub const CORE_FASTA: &str = "core.fasta"; //final core LCBs (the kore db)
-pub const CORE_CSV: &str = "core_lcbs.csv"; //info on each LCB in the core fasta
+pub const CORE_TSV: &str = "core_lcbs.tsv"; //info on each LCB in the core fasta
 pub const LOG_FILE: &str = "kore.log"; //log file written in the output folder
 pub const INTERMEDIATE_DIR: &str = "intermediate"; //parsnp, consensus and blast files (deleted unless --keep-intermediate)
 pub const DEFAULT_OUT_FOLDER: &str = "kore_output"; //folder for estimate outputs
-pub const REPORT_CSV: &str = "report.csv"; //per genome report: species, completeness, contamination
+pub const REPORT_TSV: &str = "report.tsv"; //per genome report: species, completeness, contamination
 pub const DB_ENV: &str = "KORE_DB"; //environment variable holding the default kore db folder
-pub const ALIGNMENTS_CSV: &str = "alignments.csv"; //every LCB alignment in every genome
+pub const ALIGNMENTS_TSV: &str = "alignments.tsv"; //every LCB alignment in every genome
 pub const MM_SECONDARY_RATIO: f32 = 0.2; //minimap2 -p, low enough that partial second copies (core LCBs cut by a contig end) are still reported
 pub const MM_MAX_SECONDARY: i32 = 20; //minimap2 -N
 pub const MM_MIN_CHAIN_SCORE: i32 = 30; //minimap2 -m, asm20 default drops short LCBs
@@ -61,7 +61,7 @@ pub const NO_MATCH: &str = "NA"; //reported in place of estimates when the assem
 
 //KORE DB (kore build -o <db>): one folder per species core plus the aggregate of all of them
 pub const DEFAULT_DB: &str = "kore_db"; //default db folder for kore build
-pub const DB_CORES_DIR: &str = "cores"; //<db>/cores/<species>/: core.fasta, core_lcbs.csv, genomes.txt, info.tsv, calibration*.tsv, kore.log
+pub const DB_CORES_DIR: &str = "cores"; //<db>/cores/<species>/: core.fasta, core_lcbs.tsv, genomes.txt, info.tsv, calibration*.tsv, kore.log
 pub const DB_SPECIES: &str = "species.tsv"; //<db>/species.tsv: one row per species (taxonomy, core size, genome size, masks)
 pub const AGGREGATE_FASTA: &str = "aggregate.fasta"; //every core's LCBs, named <species>|<lcb>
 pub const AGGREGATE_INDEX: &str = "aggregate.mmi"; //minimap2 index of AGGREGATE_FASTA (species detection, contamination)
@@ -109,16 +109,16 @@ pub const DEFAULT_CALL_BREADTH: f64 = 1.0; //min % of a foreign species' diagnos
 pub const DEFAULT_CALL_LCBS: usize = 10; //min LCBs with >= CALL_LCB_BP diagnostic bp covered to call a foreign species
 pub const CALL_LCB_BP: usize = 500; //diagnostic bp an LCB needs covered to count towards DEFAULT_CALL_LCBS
 pub const LENGTH_FLAG_SLACK: f64 = 0.1;
-//report.csv kore_divergence_flag 'high': the genome is further from the species core than the species' own build genomes
+//report.tsv kore_divergence_flag 'high': the genome is further from the species core than the species' own build genomes
 //(a clade they did not sample; its completeness can read low). Species reference = median over core LCBs of
 //100 - identity_min (calibration.tsv: the most distant build genome per LCB); 'high' above reference + margin.
 //Validation: 0 of 1,023 build genomes flagged (an absolute 2 % flagged 55, all ~100 % complete: diverse species such as
 //Borrelia, Ralstonia, Streptomyces); ATB CheckM2-complete genomes: 148 flagged, 82 % of them > 2 pp below CheckM2.
 pub const DIVERGENCE_FLAG_MARGIN: f64 = 0.5;
 pub const DIVERGENCE_FLAG_FALLBACK: f64 = 2.0; //absolute threshold (%) for cores without calibration
-//report.csv kore_core_fraction_flag only at >= this completeness (%): in smaller fragments the core fraction is noise
+//report.tsv kore_core_fraction_flag only at >= this completeness (%): in smaller fragments the core fraction is noise
 //(ATB test: 3 % of CheckM2-clean assemblies < 40 % complete flagged 'low', none at >= 50 %)
-pub const CORE_FRACTION_FLAG_MIN_COMPLETENESS: f64 = 50.0; //report.csv kore_length_flag 'long': assembly > longest build genome + this x median
+pub const CORE_FRACTION_FLAG_MIN_COMPLETENESS: f64 = 50.0; //report.tsv kore_length_flag 'long': assembly > longest build genome + this x median
 //genome size (sequence the contamination estimate cannot see: species outside the db, plasmids, non-bacterial DNA)
 pub const REDUNDANT_IDENTITY_MIN: f64 = 0.5; //kore_contamination_redundant_identity reported only above this % redundancy
-pub const CONTAMINANTS_CSV: &str = "contaminants.csv"; //every foreign species considered, per genome
+pub const CONTAMINANTS_TSV: &str = "contaminants.tsv"; //every foreign species considered, per genome

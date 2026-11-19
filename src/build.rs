@@ -453,7 +453,7 @@ fn prepare(job: &Job, dir: &Path) -> bool {
     }
     if dir.join(CORE_FASTA).exists() {
         warn!("{}: genome list changed, rebuilding its core", job.name);
-        for f in [CORE_FASTA, CORE_CSV, CALIBRATION_LCBS, CALIBRATION_GENOMES] {
+        for f in [CORE_FASTA, CORE_TSV, "core_lcbs.csv", CALIBRATION_LCBS, CALIBRATION_GENOMES] { //core_lcbs.csv: cores built before the tsv outputs
             let _ = fs::remove_file(dir.join(f));
         }
     }
@@ -578,7 +578,7 @@ pub fn build(args: BuildArgs) {
     }
 }
 
-//(shortest, longest) of all build genomes: the length range for report.csv kore_length_flag
+//(shortest, longest) of all build genomes: the length range for report.tsv kore_length_flag
 pub fn genome_size_range(genomes: &[String]) -> (f64, f64) {
     let l: Vec<f64> = genomes.iter().map(|g| read_fasta(Path::new(g)).iter().map(|c| c.seq.len()).sum::<usize>() as f64).collect();
     (l.iter().cloned().fold(f64::INFINITY, f64::min), l.iter().cloned().fold(0.0, f64::max))
@@ -689,7 +689,7 @@ fn build_species(args: &BuildArgs, out_dir: &Path) {
     let consensus_fastas = build_consensus(&replicate_dirs, &tmp_dir.join("consensus"), args.min_length, args.max_diversity);
     let mut core = merge_replicates(&consensus_fastas, &tmp_dir.join("blast"), args.replicate_identity, args.min_length, args.threads);
     rename_core(&mut core);
-    write_core_csv(&core, &out_dir.join(CORE_CSV));
+    write_core_tsv(&core, &out_dir.join(CORE_TSV));
     info!("Final core: {} LCBs ({} bp)", core.len(), core.iter().map(|r| r.seq.len()).sum::<usize>());
 
     let size = genome_size(&sampled);

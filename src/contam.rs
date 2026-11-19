@@ -40,7 +40,7 @@
 //    found LCBs pass their calibrated identity bar), every estimate is reported as NA with a warning.
 use crate::cli::*;
 use crate::consts::*;
-use crate::estimate::{Hit, SpeciesMatch, best_lcb_identities, build_aligner, create_csv, genome_name, map_genome, map_lcb,
+use crate::estimate::{Hit, SpeciesMatch, best_lcb_identities, build_aligner, create_tsv, genome_name, map_genome, map_lcb,
                       nucleotide_completeness, species_match, calibration, divergence_reference};
 use crate::aggregate::*;
 use crate::util::*;
@@ -492,32 +492,32 @@ where F: Fn(&str, usize) -> Option<Result> + Sync {
     results.into_inner().unwrap().into_iter().flatten().collect()
 }
 
-//report.csv (one row per assembly), contaminants.csv (whole db only) and, with alignments, alignments.csv
+//report.tsv (one row per assembly), contaminants.tsv (whole db only) and, with alignments, alignments.tsv
 pub fn write_report(results: &[Result], out: &Path, alignments: bool) {
     let na = NO_MATCH;
     let f4 = |x: f64| format!("{:.4}", x); //fractions and ratios
     let f2 = |x: f64| format!("{:.2}", x); //percentages
-    let mut r_out = create_csv(&out.join(REPORT_CSV));
-    writeln!(r_out, "genome,species,species_source,kore_species_match_percent,closest_species,kore_completeness,kore_lcbs_found,\
-                     kore_contamination,kore_contamination_redundant,kore_contamination_redundant_identity,kore_contamination_foreign,\
-                     kore_contamination_foreign_species,kore_divergence_median,kore_divergence_sd,kore_divergence_flag,assembly_bp,kore_length_ratio,\
-                     kore_length_flag,core_bp,kore_core_fraction,kore_core_fraction_expected,kore_core_fraction_flag").unwrap();
+    let mut r_out = create_tsv(&out.join(REPORT_TSV));
+    writeln!(r_out, "genome\tspecies\tspecies_source\tkore_species_match_percent\tclosest_species\tkore_completeness\tkore_lcbs_found\t\
+                     kore_contamination\tkore_contamination_redundant\tkore_contamination_redundant_identity\tkore_contamination_foreign\t\
+                     kore_contamination_foreign_species\tkore_divergence_median\tkore_divergence_sd\tkore_divergence_flag\tassembly_bp\tkore_length_ratio\t\
+                     kore_length_flag\tcore_bp\tkore_core_fraction\tkore_core_fraction_expected\tkore_core_fraction_flag").unwrap();
     let whole_db = results.iter().any(|r| r.foreign_assessed);
     let mut f = whole_db.then(|| {
-        let mut f = create_csv(&out.join(CONTAMINANTS_CSV));
-        writeln!(f, "genome,target_species,species,diagnostic_breadth,lcbs,estimate,contigs,contig_bp,called").unwrap();
+        let mut f = create_tsv(&out.join(CONTAMINANTS_TSV));
+        writeln!(f, "genome\ttarget_species\tspecies\tdiagnostic_breadth\tlcbs\testimate\tcontigs\tcontig_bp\tcalled").unwrap();
         f
     });
     let mut a = alignments.then(|| {
-        let mut a = create_csv(&out.join(ALIGNMENTS_CSV));
-        writeln!(a, "genome,lcb,contig,start,end,coverage,identity").unwrap();
+        let mut a = create_tsv(&out.join(ALIGNMENTS_TSV));
+        writeln!(a, "genome\tlcb\tcontig\tstart\tend\tcoverage\tidentity").unwrap();
         a
     });
     for r in results {
         let pct = r.species_match.percent;
         if !r.species_match.matched() {
             //not the given species / no species in the db: no estimates; closest_species = the best candidate
-            writeln!(r_out, "{},{na},{},{:.2},{},{na},{na},{na},{na},{na},{na},{na},{na},{na},{na},{},{na},{na},{na},{na},{na},{na}", r.genome,
+            writeln!(r_out, "{}\t{na}\t{}\t{:.2}\t{}\t{na}\t{na}\t{na}\t{na}\t{na}\t{na}\t{na}\t{na}\t{na}\t{na}\t{}\t{na}\t{na}\t{na}\t{na}\t{na}\t{na}", r.genome,
                      r.species_source, pct, r.species, r.assembly_bp).unwrap();
             continue;
         }
@@ -556,12 +556,12 @@ pub fn write_report(results: &[Result], out: &Path, alignments: bool) {
         let length_flag = if known(r.genome_size) && known(r.genome_size_max) {
             if r.assembly_bp as f64 > r.genome_size_max + LENGTH_FLAG_SLACK * r.genome_size { "long" } else { "ok" }
         } else { na };
-        writeln!(r_out, "{},{},{},{:.2},{na},{:.2},{}/{},{:.2},{:.2},{},{},{},{},{},{},{},{},{},{},{},{},{}", r.genome, r.species,
+        writeln!(r_out, "{}\t{}\t{}\t{:.2}\t{na}\t{:.2}\t{}/{}\t{:.2}\t{:.2}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", r.genome, r.species,
                  r.species_source, pct, r.completeness, r.lcbs_found, r.core.len(), r.contamination(), r.redundancy, red_id, foreign, named, div_med, div_sd, div_flag,
                  r.assembly_bp, length_ratio, length_flag, core_bp, core_fraction, core_fraction_expected, core_fraction_flag).unwrap();
         if let Some(f) = f.as_mut() {
             for x in &r.foreign {
-                writeln!(f, "{},{},{},{:.4},{},{:.4},{},{},{}", r.genome, r.species, x.species, x.breadth, x.lcbs, x.estimate,
+                writeln!(f, "{}\t{}\t{}\t{:.4}\t{}\t{:.4}\t{}\t{}\t{}", r.genome, r.species, x.species, x.breadth, x.lcbs, x.estimate,
                          x.contigs, x.contig_bp, x.called).unwrap();
             }
         }
@@ -569,7 +569,7 @@ pub fn write_report(results: &[Result], out: &Path, alignments: bool) {
             for (lcb, lh) in r.core.iter().zip(&r.hits) {
                 for h in lh {
                     let cov = 100.0 * (h.lcb_end - h.lcb_start + 1) as f64 / lcb.seq.len() as f64;
-                    writeln!(a, "{},{},{},{},{},{:.4},{:.4}", r.genome, lcb.id(), h.contig, h.start, h.end, cov, h.identity).unwrap();
+                    writeln!(a, "{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}", r.genome, lcb.id(), h.contig, h.start, h.end, cov, h.identity).unwrap();
                 }
             }
         }
@@ -581,9 +581,9 @@ pub fn write_report(results: &[Result], out: &Path, alignments: bool) {
     if let Some(mut f) = f {
         f.flush().unwrap();
     }
-    let mut files = vec![REPORT_CSV];
-    if whole_db { files.push(CONTAMINANTS_CSV); }
-    if alignments { files.push(ALIGNMENTS_CSV); }
+    let mut files = vec![REPORT_TSV];
+    if whole_db { files.push(CONTAMINANTS_TSV); }
+    if alignments { files.push(ALIGNMENTS_TSV); }
     info!("Wrote {} to {}", files.join(", "), out.display());
 }
 
