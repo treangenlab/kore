@@ -1,0 +1,21 @@
+accession	species	use
+GCA_027942315.1	Mycoplasma capricolum	build genome
+GCA_011464655.1	Mycoplasma capricolum	build genome
+GCA_000012765.1	Mycoplasma capricolum	build genome
+GCA_011464495.1	Mycoplasma capricolum	build genome
+GCA_011464075.1	Mycoplasma capricolum	build genome
+GCA_029678025.1	Mycoplasma feriruminatoris	build genome
+GCA_029677985.1	Mycoplasma feriruminatoris	build genome
+GCA_029677725.1	Mycoplasma feriruminatoris	build genome
+GCA_029677705.1	Mycoplasma feriruminatoris	build genome
+GCA_029677685.1	Mycoplasma feriruminatoris	build genome
+GCA_000441715.1	Chlamydia trachomatis	build genome
+GCA_000318785.1	Chlamydia trachomatis	build genome
+GCA_025723025.1	Chlamydia trachomatis	build genome
+GCA_000092665.1	Chlamydia trachomatis	build genome
+GCA_000318765.1	Chlamydia trachomatis	build genome
+GCA_051053445.1	Mycoplasma capricolum	assemblies: target
+GCA_051052485.1	Mycoplasma capricolum	target_strain30: same-species contaminant
+GCA_047715995.1	Mycoplasma feriruminatoris	target_sister30: foreign contaminant
+GCA_039778415.1	Chlamydia trachomatis	other_complete
+GCA_041931765.1	Mycoplasmoides pneumoniae	unknown: not in the db

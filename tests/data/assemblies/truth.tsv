@@ -1,0 +1,7 @@
+assembly	species	completeness	contamination
+target_complete	mycoplasma_capricolum	100.00	0.00
+target_half	mycoplasma_capricolum	49.41	0.00
+target_sister30	mycoplasma_capricolum	100.00	29.94
+target_strain30	mycoplasma_capricolum	100.00	28.61
+other_complete	chlamydia_trachomatis	100.00	0.00
+unknown	NA	nan	nan
