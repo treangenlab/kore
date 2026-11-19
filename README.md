@@ -13,6 +13,9 @@ kore is intended for use for species with existing built core genomes in our dat
 3. Annotation free -- *kore* does not require any annotations, it simply matches DNA to DNA
 4. Robust to errors and assembly N50 -- *kore* is more robust to common assembly quality issues, with predictions not being affected nearly at all
 
+## When not to use *kore*
+If you are working with rare genomes that have less sampled diversity (think biodiversity studies), then *kore* may not support the genomes you are working with. In this case, we suggest using other tools (although note that these estimates will suffer from the same biases as shown in our paper). 
+
 ## Usage
 
 kore has three commands:
