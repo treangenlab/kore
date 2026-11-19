@@ -43,7 +43,7 @@ fn estimate(db: &PathBuf, out: &PathBuf) {
         }
     }
     kore(&args.iter().map(String::as_str).collect::<Vec<_>>());
-    for f in ["report.csv", "contaminants.csv", "alignments.csv", "kore.log"] {
+    for f in ["report.tsv", "contaminants.tsv", "alignments.tsv", "kore.log"] {
         has_rows(out.join(f));
     }
 }
