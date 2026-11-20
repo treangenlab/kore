@@ -27,7 +27,7 @@ If an assembly does not match its species' core (too few of the core's LCBs are 
 ## Requirements
 `kore estimate` has no requirements beyond *kore* itself.
 
-`kore build` also needs [Parsnp2](https://github.com/marbl/parsnp) (v2.1 or newer), [skani](https://github.com/bluenote-1577/skani) and [BLAST+](https://blast.ncbi.nlm.nih.gov/doc/blast-help/downloadblastdata.html) on your `PATH`. The easiest way to get these is through conda, 
+`kore build` also needs [Parsnp2](https://github.com/marbl/parsnp) (v2.1 or newer), [skani](https://github.com/bluenote-1577/skani) and [BLAST+](https://blast.ncbi.nlm.nih.gov/doc/blast-help/downloadblastdata.html) on your `PATH`. The easiest way to get these is through conda, but these will be automatically instaled if you install *kore* directly. 
 
 ## Installation Instructions
 
