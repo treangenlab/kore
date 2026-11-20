@@ -31,8 +31,12 @@ If an assembly does not match its species' core (too few of the core's LCBs are 
 
 ## Installation Instructions
 
-#### Conda Installation
-A bioconda package is coming soon.
+#### Conda Installation (recommended)
+*kore* is easily installable via bioconda using conda/mamba (miniforge available [here](https://github.com/conda-forge/miniforge))
+```
+mamba create -n kore kore
+mamba activate kore
+```
 
 #### From source
 *kore* is written in Rust. You will need Rust 1.88 or newer (https://rustup.rs) and a C compiler.
