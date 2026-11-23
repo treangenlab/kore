@@ -13,7 +13,7 @@
 5. **Names the contaminant** -- contamination from another species in the database is reported with the species it comes from.
 
 ### How does *kore* work
-For each species, *kore* builds a core genome: the sequence (locally collinear blocks, or LCBs) shared by the species' high quality genomes, found with a Parsnp2 core-genome alignment. All species' cores are combined into a single database.
+For each species, *kore* builds a core genome using Parsnp2. The core DNA sequences (locally collinear blocks, or LCBs) is then extracted into a single representative sequence. All species' cores are then combined into a single database.
 
 To estimate, *kore* first detects the species of each assembly from the database, then aligns that species' core to the assembly. Completeness is the percent of the core found in the assembly. Contamination is the sum of two parts:
 - **same species** -- the percent of the core found more than once (e.g. a second strain)
