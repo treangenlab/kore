@@ -26,7 +26,7 @@ To estimate, *kore* first detects the species of each assembly from the database
 - **other species** -- the core of each other species in the database found in the assembly, leaving out the sequence that genomes of the assembly's own species also carry (masks)
 
 ## Some notes before running
-If you are working with rare genomes that have less sampled diversity (think biodiversity studies), then *kore* may not support the genomes you are working with. In this case, we suggest using other tools (although note that these estimates will suffer from the same biases as shown in our paper).
+If you are working with rare genomes that have less sampled diversity (think biodiversity studies), then *kore* may not support the genomes you are working with. In this case, we suggest either 1) building or updating a database with complete assemblies for that species, if available, or 2) using other tools (although note that these estimates will suffer from the same biases as shown in our paper).
 
 If an assembly does not match its species' core (too few of the core's LCBs are found, or too few of them are as identical as in the species' own genomes), *kore* does not guess: its estimates are reported as `NA` with a warning. This is usually a species that is not in the database, or a very divergent strain.
 
