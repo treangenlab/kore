@@ -1,5 +1,11 @@
 # *kore* - accurate and robust bacterial genome completeness and contamination estimation
 
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/treangenlab/kore/rust.yml) 
+[![GitHub License](https://img.shields.io/github/license/treangenlab/bronko)](https://github.com/treangenlab/kore/blob/main/LICENSE)
+[![Conda Downloads](https://img.shields.io/conda/d/bioconda/kore)](https://anaconda.org/channels/bioconda/packages/kore/overview)
+[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/treangenlab/kore)](https://github.com/treangenlab/kore/releases)
+[![Open Issues](https://img.shields.io/github/issues/treangenlab/kore)](https://github.com/treangenlab/kore/issues)
+
 ## Introduction
 *kore* is a bacterial genome completeness and contamination estimator that utilizes species specific core genomes for it's estimations. It is pretty much a stand-in replacement for BUSCO/CheckM/CheckM2.
 
